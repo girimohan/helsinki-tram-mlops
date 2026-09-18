@@ -1,0 +1,24 @@
+services:
+  ingest:
+    build: .
+    command: python -m tram_mlops.ingest
+    restart: unless-stopped
+    volumes:
+      - ./data/raw:/app/data/raw
+
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+
+  # One-off: docker compose run --rm pipeline
+  pipeline:
+    build: .
+    command: sh -c "python -m tram_mlops.process && python -m tram_mlops.train"
+    profiles: ["jobs"]
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
