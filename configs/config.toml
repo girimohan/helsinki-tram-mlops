@@ -1,0 +1,45 @@
+# Pipeline configuration. Relative paths resolve against the project root.
+# Any value can be overridden with an environment variable named
+# TRAM_<SECTION>_<KEY>, e.g. TRAM_INGEST_SAMPLE_INTERVAL_S=5.
+
+[paths]
+raw_dir = "data/raw"
+sample_file = "data/sample/raw_tram_data.jsonl"
+processed_file = "data/processed/tram_positions.parquet"
+models_dir = "models"
+
+[ingest]
+host = "mqtt.hsl.fi"
+port = 1883
+topic = "/hfp/v2/journey/ongoing/vp/tram/#"
+# HSL publishes each vehicle at ~1 Hz. Keep at most one message per vehicle
+# per interval so a day of collection stays a manageable size.
+sample_interval_s = 10
+
+[process]
+timezone = "Europe/Helsinki"
+# HSL punctuality window: no more than 1 min early and no more than 3 min late.
+on_time_min_s = -60
+on_time_max_s = 180
+# Rows whose |delay| exceeds this come from vehicles still signed into a stale journey, not real lateness.
+max_abs_delay_s = 1800
+# Line designations that are not public service (e.g. "000" on special route 1009TX).
+exclude_lines = ["000"]
+
+[model]
+# Predict a vehicle's delay this many seconds into the future.
+horizon_s = 300
+# A future observation must land within this many seconds of the horizon.
+horizon_tolerance_s = 60
+test_fraction = 0.25
+min_training_rows = 200
+random_state = 42
+
+[dashboard]
+# Live mode reads this much recent raw data straight from the ingester's files.
+live_window_min = 15
+refresh_s = 15
+# A tram counts as "in service now" if seen within this many seconds of the newest record.
+in_service_s = 120
+# Warn that the ingester may have stopped when the newest record is older than this.
+stale_after_s = 120
