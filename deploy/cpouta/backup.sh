@@ -15,8 +15,20 @@ CONF=/etc/tram/rclone.conf
 
 mountpoint -q "$DATA_ROOT" || { echo "$DATA_ROOT is not mounted; nothing to back up" >&2; exit 1; }
 
-for dir in data/raw models; do
-    rclone --config "$CONF" copy "$DATA_ROOT/$dir" "allas:$ALLAS_BUCKET/$dir" \
-        --stats-one-line --stats-log-level NOTICE --stats 1h   # one summary line per run
-done
-echo "Backed up $DATA_ROOT/{data/raw,models} to allas:$ALLAS_BUCKET"
+rc() { rclone --config "$CONF" --stats-one-line --stats-log-level NOTICE --stats 1h "$@"; }
+
+# Finished days and models are copied as they are.
+today="tram_$(date -u +%F).jsonl"
+rc copy "$DATA_ROOT/data/raw" "allas:$ALLAS_BUCKET/data/raw" --exclude "$today"
+rc copy "$DATA_ROOT/models" "allas:$ALLAS_BUCKET/models"
+
+# The collector keeps appending to today's file, and rclone refuses to upload a file
+# that changes mid-transfer, so upload a snapshot. A partial last line is harmless:
+# processing skips malformed lines.
+if [[ -f "$DATA_ROOT/data/raw/$today" ]]; then
+    snapshot="$(mktemp -d)"
+    trap 'rm -rf "$snapshot"' EXIT
+    cp "$DATA_ROOT/data/raw/$today" "$snapshot/$today"
+    rc copyto "$snapshot/$today" "allas:$ALLAS_BUCKET/data/raw/$today"
+fi
+echo "Backed up $DATA_ROOT/data/raw and $DATA_ROOT/models to allas:$ALLAS_BUCKET"

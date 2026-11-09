@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Turn on hourly backups to CSC Allas using the S3 keys that CSC's allas_conf saved
-# for the login user (the [s3allas] remote in ~/.config/rclone/rclone.conf).
+# for the login user (in ~/.aws/credentials).
 #
 # On the VM:
 #   source ~/allas-cli-utils/allas_conf -u <csc-username> -p project_2022568   # once; asks for your CSC password
@@ -11,22 +11,41 @@ set -euo pipefail
 
 BUCKET="${1:-tram-mlops-2022568}"
 LOGIN_USER="${SUDO_USER:-ubuntu}"
-USER_CONF="$(getent passwd "$LOGIN_USER" | cut -d: -f6)/.config/rclone/rclone.conf"
+USER_HOME="$(getent passwd "$LOGIN_USER" | cut -d: -f6)"
+CREDS="$USER_HOME/.aws/credentials"   # written by allas_conf
 CONF=/etc/tram/rclone.conf
 
 log() { echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "run with sudo"
-grep -qx '\[s3allas\]' "$USER_CONF" 2>/dev/null \
-    || die "no [s3allas] remote in $USER_CONF; run allas_conf first (see the comment at the top)"
+[[ -f "$CREDS" ]] || die "no $CREDS; run allas_conf first (see the comment at the top)"
 
-# Copy only the [s3allas] section, renamed to [allas], into a root-only file.
+# allas_conf writes KEY="value" lines; also accept the usual aws_access_key_id = value.
+read_key() {
+    sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"?([^\"[:space:]]*)\"?[[:space:]]*$/\1/Ip" "$CREDS" | head -n1
+}
+access="$(read_key AWS_ACCESS_KEY_ID)"
+secret="$(read_key AWS_SECRET_ACCESS_KEY)"
+[[ -n "$access" && -n "$secret" ]] || die "could not read the S3 keys from $CREDS"
+
 install -d -m 700 /etc/tram
 ( umask 077
-  awk '/^\[/ { keep = ($0 == "[s3allas]") } keep' "$USER_CONF" | sed '1s/.*/[allas]/' > "$CONF"
+  cat > "$CONF" <<EOF
+[allas]
+type = s3
+provider = Other
+env_auth = false
+endpoint = a3s.fi
+acl = private
+access_key_id = $access
+secret_access_key = $secret
+EOF
   echo "ALLAS_BUCKET=$BUCKET" > /etc/tram/backup.env )
 log "Wrote $CONF and /etc/tram/backup.env (root only)"
+
+# allas_conf leaves some of its copies of the keys readable by other users; tighten them.
+chmod 600 "$USER_HOME"/.s3cfg_* "$USER_HOME/.config/rclone/rclone.conf" 2>/dev/null || true
 
 rclone --config "$CONF" lsd allas: >/dev/null || die "Allas rejected the keys in $CONF"
 if rclone --config "$CONF" lsd allas: | awk '{print $NF}' | grep -qx "$BUCKET"; then

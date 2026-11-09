@@ -191,7 +191,7 @@ sudo bash deploy/cpouta/enable-backups.sh                              # bucket 
 The S3 keys need your CSC password once: a cPouta application credential isn't allowed to create them (Keystone answers "403 Forbidden").
 
 [enable-backups.sh](enable-backups.sh) does the following:
-1. Copies the `[s3allas]` keys that `allas_conf` saved into a root-only `/etc/tram/rclone.conf`.
+1. Copies the S3 keys that `allas_conf` saved in `~/.aws/credentials` into a root-only `/etc/tram/rclone.conf`, and makes `allas_conf`'s own key files private.
 2. Writes `ALLAS_BUCKET` to `/etc/tram/backup.env`.
 3. Creates the bucket.
 4. Turns on the timer.
