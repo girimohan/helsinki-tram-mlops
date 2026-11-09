@@ -21,7 +21,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 |---|---|---|---|---|
 | 1 | [E1 Reproducible pipeline and CI](#e1-reproducible-pipeline-and-ci) | 1–1.5 d | none | Planned |
 | 2 | [E2 Incremental, day-partitioned storage](#e2-incremental-day-partitioned-storage) | 3–4 d | none | Planned |
-| 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **Phases 1–2 running**: collecting since 2026-11-09, public HTTPS dashboard, deploy on green CI ([setup guide](../deploy/cpouta/README.md)). Allas backups wait for Allas access; phase 3 planned |
+| 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **Phases 1–2 done**: collecting since 2026-11-09, public HTTPS dashboard, deploy on green CI, hourly Allas backups ([setup guide](../deploy/cpouta/README.md)). Phase 3 (Terraform) planned |
 | 4 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
 | 5 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | Planned |
 | 6 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | Planned |
@@ -80,7 +80,7 @@ Items 1–7 (about 18 working days) complete the core loop. The rest adds depth.
 - **Phase 2:**
   - **Done 2026-11-09:** Caddy with an automatic Let's Encrypt certificate serves the public dashboard. Only port 443 is open, and the dashboard is memory-capped so it can't starve the collector.
   - **Done 2026-11-09:** pull-based deploy. A systemd timer on the VM fast-forwards to new commits on `main` once all their GitHub checks have passed, so the VM needs no inbound access or deploy keys.
-  - **Waiting for Allas access:** hourly `rclone copy` of raw data and models to CSC Allas (S3-compatible object storage). The script and timer are ready.
+  - **Done 2026-11-09:** hourly `rclone copy` of raw data and models to the CSC Allas (S3) bucket `tram-mlops-2022568`. It never deletes anything, and it uploads a snapshot of the file the collector is still writing.
 - **Phase 3:** Terraform with the OpenStack provider (cPouta is OpenStack) and application credentials. It defines the VM, volume, security groups and floating IP as code.
 
 **Changes.** `deploy/cpouta/`, environment-driven paths in `docker-compose.yml`. Later: `infra/terraform/`, `deploy/Caddyfile`, `.github/workflows/release.yml`.
