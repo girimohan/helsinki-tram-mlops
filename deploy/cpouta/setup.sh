@@ -51,9 +51,10 @@ install_packages() {
         systemctl enable --now docker
         usermod -aG docker "$LOGIN_USER"
     fi
-    if ! command -v rclone >/dev/null 2>&1; then
-        log "Installing rclone (for backups to Allas)"
-        apt-get install -yq rclone
+    if ! command -v rclone >/dev/null 2>&1 || ! command -v s3cmd >/dev/null 2>&1; then
+        # rclone runs the backups; CSC's allas_conf needs the others to create the S3 keys.
+        log "Installing rclone and the Allas tools"
+        apt-get install -yq rclone s3cmd restic python3-openstackclient python3-swiftclient
     fi
 }
 

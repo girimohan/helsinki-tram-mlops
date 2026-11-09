@@ -182,7 +182,7 @@ A failing or unfinished CI run leaves the server on the previous commit. Nothing
 To turn backups on (once Allas is enabled for the project):
 
 ```bash
-sudo apt-get install -y python3-openstackclient                       # once
+# setup.sh has already installed rclone, s3cmd, restic and the OpenStack client that allas_conf needs
 git clone https://github.com/CSCfi/allas-cli-utils.git ~/allas-cli-utils
 source ~/allas-cli-utils/allas_conf -u <csc-username> -p project_2022568  # asks for your CSC password
 sudo bash deploy/cpouta/enable-backups.sh                              # bucket tram-mlops-2022568 by default
