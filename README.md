@@ -4,6 +4,8 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Streamlit](https://img.shields.io/badge/dashboard-Streamlit-ff4b4b)
 
+**Live dashboard: <https://fip-86-50-253-12.kaj.poutavm.fi>** (collector and dashboard running on CSC cPouta)
+
 An end-to-end pipeline for real-time data and machine learning. It collects **live GPS positions of every tram in Helsinki**, cleans them into an analysis-ready dataset, trains a model that **forecasts each tram's delay 5 minutes ahead**, and serves everything in a **live dashboard** that refreshes every 15 seconds.
 
 ![Live dashboard](docs/images/dashboard_live.png)
