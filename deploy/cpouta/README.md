@@ -177,24 +177,27 @@ A failing or unfinished CI run leaves the server on the previous commit. Nothing
 
 ## Backups to CSC Allas
 
-`tram-backup.timer` runs [backup.sh](backup.sh) every hour. It uses `rclone copy`, which never deletes anything, to copy `/srv/tram/data/raw` and `/srv/tram/models` to an Allas bucket. A file deleted or damaged on the VM therefore stays safe in Allas. The timer is turned on by `setup.sh` once these two files exist on the VM:
+`tram-backup.timer` runs [backup.sh](backup.sh) every hour. It uses `rclone copy`, which never deletes anything, to copy `/srv/tram/data/raw` and `/srv/tram/models` to an Allas bucket. A file deleted or damaged on the VM therefore stays safe in Allas.
 
-- `/etc/tram/rclone.conf`, readable by root only:
+To turn backups on (once Allas is enabled for the project):
 
-  ```ini
-  [allas]
-  type = s3
-  provider = Other
-  env_auth = false
-  endpoint = a3s.fi
-  acl = private
-  access_key_id = <EC2 access key>
-  secret_access_key = <EC2 secret>
-  ```
+```bash
+sudo apt-get install -y python3-openstackclient                       # once
+git clone https://github.com/CSCfi/allas-cli-utils.git ~/allas-cli-utils
+source ~/allas-cli-utils/allas_conf -u <csc-username> -p project_2022568  # asks for your CSC password
+sudo bash deploy/cpouta/enable-backups.sh                              # bucket tram-mlops-2022568 by default
+```
 
-- `/etc/tram/backup.env`, containing `ALLAS_BUCKET=<bucket name>`. Bucket names are visible to all Allas users and can't be renamed.
+The S3 keys need your CSC password once: a cPouta application credential isn't allowed to create them (Keystone answers "403 Forbidden").
 
-The S3 keys come from `openstack ec2 credentials create` (with the same application credential as the CLI) or from CSC's `allas-conf`. They don't expire, so revoke them if the VM is ever compromised.
+[enable-backups.sh](enable-backups.sh) does the following:
+1. Copies the `[s3allas]` keys that `allas_conf` saved into a root-only `/etc/tram/rclone.conf`.
+2. Writes `ALLAS_BUCKET` to `/etc/tram/backup.env`.
+3. Creates the bucket.
+4. Turns on the timer.
+5. Runs the first backup.
+
+Bucket names are visible to all Allas users and can't be renamed. The keys don't expire; revoke them with `source ~/allas-cli-utils/allas_conf --s3remove` if the VM is ever compromised.
 
 To restore, run `rclone --config /etc/tram/rclone.conf copy allas:<bucket>/data/raw /srv/tram/data/raw`.
 
