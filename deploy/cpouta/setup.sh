@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Prepare an Ubuntu 24.04 cPouta VM to run the tram collector and dashboard.
+#
+# Run on the VM from a clone of this repository:
+#   sudo bash deploy/cpouta/setup.sh /dev/vdb   # first run: set up the data volume, start the services
+#   sudo bash deploy/cpouta/setup.sh            # later runs (e.g. after `git pull`): rebuild and restart
+#
+# Safe to re-run. It formats the volume only if it is completely blank, and reuses an
+# existing filesystem as is, so a volume moved from an older VM keeps its data.
+set -euo pipefail
+
+DATA_ROOT=/srv/tram
+APP_UID=1000   # the "app" user inside the Docker image
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+DEVICE="${1:-}"
+LOGIN_USER="${SUDO_USER:-ubuntu}"
+
+log() { echo "==> $*"; }
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "run with sudo"
+
+install_docker() {
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+        log "Docker is already installed"
+        return
+    fi
+    log "Installing Docker from Docker's apt repository"
+    apt-get update -q
+    apt-get install -yq ca-certificates curl
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]" \
+        "https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list
+    apt-get update -q
+    apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    systemctl enable --now docker
+    usermod -aG docker "$LOGIN_USER"
+}
+
+mount_volume() {
+    if mountpoint -q "$DATA_ROOT"; then
+        log "Data volume already mounted at $DATA_ROOT"
+        return
+    fi
+    [[ -n "$DEVICE" ]] || die "nothing is mounted at $DATA_ROOT. Pass the volume's device, e.g.
+    sudo bash $0 /dev/vdb
+Find it with: lsblk   (the disk whose size matches the volume you attached)"
+    [[ -b "$DEVICE" ]] || die "$DEVICE is not a block device"
+    if lsblk -nro MOUNTPOINT "$DEVICE" | grep -q .; then
+        die "$DEVICE (or a partition on it) is already mounted; is this the system disk?"
+    fi
+
+    local fstype
+    fstype="$(blkid -o value -s TYPE "$DEVICE" || true)"
+    if [[ -z "$fstype" ]]; then
+        # No filesystem. Only format if there is no partition table or other signature either.
+        [[ -z "$(wipefs -n "$DEVICE")" ]] || die "$DEVICE has a partition table or unknown data; not formatting it"
+        log "Formatting blank volume $DEVICE as ext4"
+        mkfs.ext4 -q -L tramdata "$DEVICE"
+        fstype=ext4
+    else
+        log "Reusing existing $fstype filesystem on $DEVICE"
+    fi
+
+    local uuid
+    uuid="$(blkid -o value -s UUID "$DEVICE")"
+    mkdir -p "$DATA_ROOT"
+    if ! grep -q "UUID=$uuid" /etc/fstab; then
+        # nofail: the VM still boots if the volume is ever detached.
+        echo "UUID=$uuid $DATA_ROOT $fstype defaults,nofail 0 2" >> /etc/fstab
+    fi
+    systemctl daemon-reload
+    mount "$DATA_ROOT"
+    log "Mounted $DEVICE at $DATA_ROOT"
+}
+
+prepare_dirs() {
+    mkdir -p "$DATA_ROOT/data/raw" "$DATA_ROOT/data/processed" "$DATA_ROOT/models"
+    chown -R "$APP_UID:$APP_UID" "$DATA_ROOT/data" "$DATA_ROOT/models"
+    if [[ ! -f "$REPO_DIR/.env" ]]; then
+        cat > "$REPO_DIR/.env" <<EOF
+TRAM_DATA_DIR=$DATA_ROOT/data
+TRAM_MODELS_DIR=$DATA_ROOT/models
+DASHBOARD_BIND=127.0.0.1
+EOF
+        chown "$LOGIN_USER:" "$REPO_DIR/.env"
+        log "Wrote $REPO_DIR/.env"
+    fi
+}
+
+start_services() {
+    log "Building and starting the collector and dashboard"
+    cd "$REPO_DIR"
+    docker compose up -d --build ingest dashboard
+    docker compose ps
+}
+
+install_docker
+mount_volume
+prepare_dirs
+start_services
+
+cat <<EOF
+
+Done. Raw data is written to $DATA_ROOT/data/raw (one file per UTC day).
+  Collector log:   docker compose logs -f ingest      (log out and back in once to use docker without sudo)
+  Disk usage:      df -h $DATA_ROOT
+  Dashboard:       from your laptop run
+                   ssh -L 8501:localhost:8501 $LOGIN_USER@<floating-ip>
+                   then open http://localhost:8501
+EOF

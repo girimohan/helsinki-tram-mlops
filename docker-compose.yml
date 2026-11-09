@@ -1,24 +1,44 @@
+# Host paths and the dashboard's bind address come from environment variables or a
+# .env file next to this one, so the same file runs locally and on a server
+# (see deploy/cpouta/). Defaults suit a local checkout.
+#
+#   TRAM_DATA_DIR   host folder holding raw/ and processed/   (default ./data)
+#   TRAM_MODELS_DIR host folder for trained models             (default ./models)
+#   DASHBOARD_BIND  address the dashboard listens on           (default 127.0.0.1, this machine only)
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   ingest:
     build: .
     command: python -m tram_mlops.ingest
     restart: unless-stopped
+    logging: *logging
     volumes:
-      - ./data/raw:/app/data/raw
+      - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw
 
   dashboard:
     build: .
+    restart: unless-stopped
+    logging: *logging
     ports:
-      - "8501:8501"
+      - "${DASHBOARD_BIND:-127.0.0.1}:8501:8501"
     volumes:
-      - ./data:/app/data
-      - ./models:/app/models
+      - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw:ro
+      - ${TRAM_DATA_DIR:-./data}/processed:/app/data/processed
+      - ${TRAM_MODELS_DIR:-./models}:/app/models:ro
 
   # One-off: docker compose run --rm pipeline
   pipeline:
     build: .
     command: sh -c "python -m tram_mlops.process && python -m tram_mlops.train"
     profiles: ["jobs"]
+    logging: *logging
     volumes:
-      - ./data:/app/data
-      - ./models:/app/models
+      - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw:ro
+      - ${TRAM_DATA_DIR:-./data}/processed:/app/data/processed
+      - ${TRAM_MODELS_DIR:-./models}:/app/models

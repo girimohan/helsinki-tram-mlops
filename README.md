@@ -90,6 +90,8 @@ docker compose up -d ingest dashboard     # collector + dashboard on http://loca
 docker compose run --rm pipeline          # process + train; run periodically, e.g. from cron
 ```
 
+To run the collector around the clock on a cloud VM, see [deploy/cpouta/](deploy/cpouta/README.md) (CSC cPouta).
+
 ## Dashboard
 
 **Live** view (screenshot at the top): trams in service, the share on time, a live map, a line-by-line status board and live forecasts. It refreshes every 15 seconds and warns if the collector stops sending data.
@@ -163,7 +165,8 @@ helsinki-tram-mlops/
 ├── tests/               # 28 pytest tests, including dashboard smoke tests
 ├── scripts/             # figure and screenshot generation for this README
 ├── data/sample/         # small bundled sample (Feb 2026)
-├── docs/images/         # README figures and screenshots
+├── docs/                # ROADMAP.md, README figures and screenshots
+├── deploy/cpouta/       # cloud VM setup guide and script
 ├── Dockerfile, docker-compose.yml
 └── .github/workflows/ci.yml
 ```
@@ -194,6 +197,8 @@ python scripts/screenshot_dashboard.py     # drives your installed Chrome; run w
 ```
 
 ## Roadmap
+
+The engineering plan (storage, evaluation, retraining, monitoring, serving) is in [docs/ROADMAP.md](docs/ROADMAP.md). Product ideas:
 
 - **More data.** Run the collector for several weeks so the model sees rush hours, weekends and weather. This is the main lever for the en-route forecast.
 - **Reliability per stop, line and hour.** For example: "Line 7 at Senaatintori, weekdays 8–9 am: on time 62% of the time." The HSL app shows the current delay but not how reliable a line *usually* is.

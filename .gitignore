@@ -16,3 +16,9 @@ models/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local environment settings (e.g. on the server, written by deploy/cpouta/setup.sh)
+.env
+# OpenStack credentials (contain secrets)
+clouds.yaml
+*openrc*.sh
