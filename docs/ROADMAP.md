@@ -21,7 +21,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 |---|---|---|---|---|
 | 1 | [E1 Reproducible pipeline and CI](#e1-reproducible-pipeline-and-ci) | 1–1.5 d | none | Planned |
 | 2 | [E2 Incremental, day-partitioned storage](#e2-incremental-day-partitioned-storage) | 3–4 d | none | Planned |
-| 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **In progress**: [setup guide](../deploy/cpouta/README.md) |
+| 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **Phase 1 done**: collecting since 2026-11-09 ([setup guide](../deploy/cpouta/README.md)); phases 2–3 planned |
 | 4 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
 | 5 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | Planned |
 | 6 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | Planned |
@@ -71,7 +71,7 @@ Items 1–7 (about 18 working days) complete the core loop. The rest adds depth.
 **Why.** The collector has to run around the clock to build a multi-week dataset. A server also makes a live demo possible.
 
 **Design.**
-- **Phase 1 (current):**
+- **Phase 1 (done 2026-11-09):**
   - one `standard.small` VM (Ubuntu 24.04) on cPouta, project 2022568
   - raw data on a separate persistent volume, so it outlives the VM
   - the collector and dashboard run with Docker Compose
