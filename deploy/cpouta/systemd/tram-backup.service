@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up tram data and models to CSC Allas
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash @REPO_DIR@/deploy/cpouta/backup.sh

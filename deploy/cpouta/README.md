@@ -131,11 +131,12 @@ Log out and back in once so that `docker` works without `sudo`.
 
 | Task | Command (on the VM, in `~/helsinki-tram-mlops`) |
 |---|---|
-| Deploy new code | `git pull && sudo bash deploy/cpouta/setup.sh` |
+| Deploy new code | Automatic: push to `main`, and the VM deploys once CI passes (see below). Re-run `sudo bash deploy/cpouta/setup.sh` after changing anything in `deploy/`. |
+| Deploy history | `journalctl -u tram-autodeploy -n 30` |
 | Collector status | `docker compose ps` and `docker compose logs --tail 20 ingest` |
 | Disk space | `df -h /srv/tram` |
 | Copy data to the laptop | On the laptop: `scp "tram:/srv/tram/data/raw/tram_2026-11-*.jsonl" data/raw/` |
-| Process and train on the VM | `docker compose run --rm pipeline`. Fine for a few days of data. Use a larger flavor, or wait for E2, before training on weeks of data. |
+| Process and train | On the laptop, from copied data. Not on this VM yet: `process` holds every raw record in memory, and one full day (about 500k records) needs about 1 GB. Roadmap item E2 fixes this. |
 | Stop collecting | `docker compose stop ingest` |
 | Apply OS updates | Ubuntu installs security updates automatically. Run `sudo reboot` now and then for kernel updates; the services start again by themselves. |
 
@@ -155,7 +156,49 @@ Alternatively, **Resize Instance** changes the flavor of the existing VM in plac
 5. Run `setup.sh`, which mounts it.
 6. Run `sudo resize2fs /dev/vdb`. ext4 can grow while it is mounted.
 
-**Backups.** Not automated yet. The volume is the only copy of the data. Until phase 2 adds nightly copies to CSC Allas, copy finished days to your laptop now and then (see the table above).
+## Public HTTPS dashboard
+
+The dashboard can be served at `https://<vm-hostname>`. cPouta gives every floating IP a DNS name of the form `fip-86-50-253-12.kaj.poutavm.fi`; find yours with `nslookup <floating-ip>`. The setup has these parts:
+- **Firewall:** `WEB=1 bash deploy/cpouta/provision.sh <your-ip>/32` adds a `tram-web` security group that opens port 443 only. SSH stays limited to your IP.
+- **Proxy:** `sudo bash deploy/cpouta/setup.sh --public <vm-hostname>` starts [Caddy](../Caddyfile). Caddy gets a Let's Encrypt certificate through port 443 itself and renews it automatically. Port 80 stays closed.
+- **Protecting the collector:**
+  - The dashboard container is capped at 1 GB of memory.
+  - The collector is the last process the kernel would kill if memory runs out.
+  - Page views never start a processing run (`TRAM_DASHBOARD_PROCESS_ON_DEMAND=false`).
+
+## Automatic deploys
+
+`tram-autodeploy.timer` runs [autodeploy.sh](autodeploy.sh) every 5 minutes:
+1. It checks GitHub for a new commit on `main`.
+2. When there is one, it asks the GitHub API whether every CI check on that commit passed.
+3. Only then does it fast-forward the clone and run `docker compose up -d --build`.
+
+A failing or unfinished CI run leaves the server on the previous commit. Nothing connects in to the VM, so no deploy keys or extra open ports are needed.
+
+## Backups to CSC Allas
+
+`tram-backup.timer` runs [backup.sh](backup.sh) every hour. It uses `rclone copy`, which never deletes anything, to copy `/srv/tram/data/raw` and `/srv/tram/models` to an Allas bucket. A file deleted or damaged on the VM therefore stays safe in Allas. The timer is turned on by `setup.sh` once these two files exist on the VM:
+
+- `/etc/tram/rclone.conf`, readable by root only:
+
+  ```ini
+  [allas]
+  type = s3
+  provider = Other
+  env_auth = false
+  endpoint = a3s.fi
+  acl = private
+  access_key_id = <EC2 access key>
+  secret_access_key = <EC2 secret>
+  ```
+
+- `/etc/tram/backup.env`, containing `ALLAS_BUCKET=<bucket name>`. Bucket names are visible to all Allas users and can't be renamed.
+
+The S3 keys come from `openstack ec2 credentials create` (with the same application credential as the CLI) or from CSC's `allas-conf`. They don't expire, so revoke them if the VM is ever compromised.
+
+To restore, run `rclone --config /etc/tram/rclone.conf copy allas:<bucket>/data/raw /srv/tram/data/raw`.
+
+Until backups are enabled, the volume is the only copy of the data. Copy finished days to your laptop now and then (see the table above).
 
 ## Troubleshooting
 

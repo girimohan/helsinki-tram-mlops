@@ -43,3 +43,6 @@ refresh_s = 15
 in_service_s = 120
 # Warn that the ingester may have stopped when the newest record is older than this.
 stale_after_s = 120
+# Build the processed dataset on first use if it is missing. Turn off on a public server
+# (TRAM_DASHBOARD_PROCESS_ON_DEMAND=false) so a page view can never start a full processing run.
+process_on_demand = true

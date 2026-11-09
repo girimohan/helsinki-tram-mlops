@@ -30,6 +30,15 @@ def test_dashboard_renders_from_sample_without_model(isolated_paths):
     assert any("No trained model" in i.value for i in app.info)
 
 
+def test_dashboard_never_processes_when_on_demand_is_off(isolated_paths, monkeypatch):
+    monkeypatch.setenv("TRAM_DASHBOARD_PROCESS_ON_DEMAND", "false")
+    load_config.cache_clear()
+    app = AppTest.from_file(DASHBOARD, default_timeout=60).run()
+    assert not app.exception
+    assert not (isolated_paths / "positions.parquet").exists()
+    assert any("No processed data" in w.value for w in app.warning)
+
+
 def test_dashboard_shows_forecasts_with_model(isolated_paths, synthetic_raw):
     df = clean(pd.DataFrame(synthetic_raw))
     df.to_parquet(isolated_paths / "positions.parquet")

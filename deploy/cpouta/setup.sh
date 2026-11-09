@@ -2,44 +2,59 @@
 # Prepare an Ubuntu 24.04 cPouta VM to run the tram collector and dashboard.
 #
 # Run on the VM from a clone of this repository:
-#   sudo bash deploy/cpouta/setup.sh /dev/vdb   # first run: set up the data volume, start the services
-#   sudo bash deploy/cpouta/setup.sh            # later runs (e.g. after `git pull`): rebuild and restart
+#   sudo bash deploy/cpouta/setup.sh /dev/vdb            # first run: set up the data volume, start the services
+#   sudo bash deploy/cpouta/setup.sh --public <hostname> # also serve the dashboard over HTTPS at <hostname>
+#   sudo bash deploy/cpouta/setup.sh                     # later runs: re-apply settings, rebuild and restart
 #
 # Safe to re-run. It formats the volume only if it is completely blank, and reuses an
 # existing filesystem as is, so a volume moved from an older VM keeps its data.
+# Settings are kept in .env next to docker-compose.yml.
 set -euo pipefail
 
 DATA_ROOT=/srv/tram
 APP_UID=1000   # the "app" user inside the Docker image
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DEVICE="${1:-}"
 LOGIN_USER="${SUDO_USER:-ubuntu}"
+DEVICE=""
+PUBLIC_HOST=""
 
 log() { echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --public) PUBLIC_HOST="${2:?--public needs a hostname}"; shift 2 ;;
+        /dev/*) DEVICE="$1"; shift ;;
+        *) die "unknown argument: $1" ;;
+    esac
+done
+
 [[ $EUID -eq 0 ]] || die "run with sudo"
 
-install_docker() {
+install_packages() {
     if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
         log "Docker is already installed"
-        return
+    else
+        log "Installing Docker from Docker's apt repository"
+        apt-get update -q
+        apt-get install -yq ca-certificates curl
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+        # shellcheck source=/dev/null
+        . /etc/os-release
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]" \
+            "https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+            > /etc/apt/sources.list.d/docker.list
+        apt-get update -q
+        apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        systemctl enable --now docker
+        usermod -aG docker "$LOGIN_USER"
     fi
-    log "Installing Docker from Docker's apt repository"
-    apt-get update -q
-    apt-get install -yq ca-certificates curl
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-    chmod a+r /etc/apt/keyrings/docker.asc
-    # shellcheck source=/dev/null
-    . /etc/os-release
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]" \
-        "https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
-        > /etc/apt/sources.list.d/docker.list
-    apt-get update -q
-    apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    systemctl enable --now docker
-    usermod -aG docker "$LOGIN_USER"
+    if ! command -v rclone >/dev/null 2>&1; then
+        log "Installing rclone (for backups to Allas)"
+        apt-get install -yq rclone
+    fi
 }
 
 mount_volume() {
@@ -79,38 +94,70 @@ Find it with: lsblk   (the disk whose size matches the volume you attached)"
     log "Mounted $DEVICE at $DATA_ROOT"
 }
 
-prepare_dirs() {
+# set_env KEY VALUE: add or replace one line in .env
+set_env() {
+    local file="$REPO_DIR/.env"
+    touch "$file"
+    if grep -q "^$1=" "$file"; then
+        sed -i "s|^$1=.*|$1=$2|" "$file"
+    else
+        echo "$1=$2" >> "$file"
+    fi
+}
+
+configure() {
     mkdir -p "$DATA_ROOT/data/raw" "$DATA_ROOT/data/processed" "$DATA_ROOT/models"
     chown -R "$APP_UID:$APP_UID" "$DATA_ROOT/data" "$DATA_ROOT/models"
-    if [[ ! -f "$REPO_DIR/.env" ]]; then
-        cat > "$REPO_DIR/.env" <<EOF
-TRAM_DATA_DIR=$DATA_ROOT/data
-TRAM_MODELS_DIR=$DATA_ROOT/models
-DASHBOARD_BIND=127.0.0.1
-EOF
-        chown "$LOGIN_USER:" "$REPO_DIR/.env"
-        log "Wrote $REPO_DIR/.env"
+
+    set_env TRAM_DATA_DIR "$DATA_ROOT/data"
+    set_env TRAM_MODELS_DIR "$DATA_ROOT/models"
+    set_env DASHBOARD_BIND 127.0.0.1
+    # On the server, page views must never start a processing run (see configs/config.toml).
+    set_env TRAM_DASHBOARD_PROCESS_ON_DEMAND false
+    if [[ -n "$PUBLIC_HOST" ]]; then
+        set_env TRAM_PUBLIC_HOST "$PUBLIC_HOST"
+        set_env COMPOSE_PROFILES public
+    fi
+    chown "$LOGIN_USER:" "$REPO_DIR/.env"
+    log "Settings in $REPO_DIR/.env:"
+    sed 's/^/      /' "$REPO_DIR/.env"
+}
+
+install_timers() {
+    local unit
+    for unit in "$REPO_DIR"/deploy/cpouta/systemd/*; do
+        sed -e "s|@REPO_DIR@|$REPO_DIR|g" -e "s|@USER@|$LOGIN_USER|g" "$unit" \
+            > "/etc/systemd/system/$(basename "$unit")"
+    done
+    systemctl daemon-reload
+    systemctl enable --now tram-autodeploy.timer >/dev/null 2>&1
+    log "Automatic deploys enabled (tram-autodeploy.timer, every 5 min)"
+    if [[ -f /etc/tram/rclone.conf && -f /etc/tram/backup.env ]]; then
+        systemctl enable --now tram-backup.timer >/dev/null 2>&1
+        log "Hourly backups to Allas enabled (tram-backup.timer)"
+    else
+        log "Backups not enabled yet: /etc/tram/rclone.conf and backup.env are missing (see README)"
     fi
 }
 
 start_services() {
-    log "Building and starting the collector and dashboard"
+    log "Building and starting the services"
     cd "$REPO_DIR"
-    docker compose up -d --build ingest dashboard
+    docker compose up -d --build --remove-orphans
     docker compose ps
 }
 
-install_docker
+install_packages
 mount_volume
-prepare_dirs
+configure
+install_timers
 start_services
 
 cat <<EOF
 
 Done. Raw data is written to $DATA_ROOT/data/raw (one file per UTC day).
   Collector log:   docker compose logs -f ingest      (log out and back in once to use docker without sudo)
+  Deploy log:      journalctl -u tram-autodeploy -n 20
   Disk usage:      df -h $DATA_ROOT
-  Dashboard:       from your laptop run
-                   ssh -L 8501:localhost:8501 $LOGIN_USER@<floating-ip>
-                   then open http://localhost:8501
+  Dashboard:       ssh tunnel to localhost:8501$( [[ -n "$PUBLIC_HOST" ]] && echo ", or https://$PUBLIC_HOST" )
 EOF

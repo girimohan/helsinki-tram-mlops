@@ -1,0 +1,23 @@
+# Public HTTPS front for the dashboard (docker compose profile "public").
+# Only port 443 is open on the server, so certificates are obtained with the
+# TLS-ALPN challenge on 443 and there is no port-80 redirect.
+{
+	auto_https disable_redirects
+}
+
+{$TRAM_PUBLIC_HOST} {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	# Streamlit uses a WebSocket; Caddy proxies it without extra settings.
+	reverse_proxy dashboard:8501
+}

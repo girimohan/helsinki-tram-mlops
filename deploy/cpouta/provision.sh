@@ -6,6 +6,7 @@
 # OS_CLOUD (clouds.yaml) or a sourced app-credential openrc file. See README.md.
 #
 # Usage:  bash deploy/cpouta/provision.sh <your-public-ip>/32 [<another-ip>/32 ...]
+#         WEB=1 bash deploy/cpouta/provision.sh ...   # also open HTTPS (443) for the public dashboard
 #
 # Safe to re-run: existing resources are reused, and only missing ones are created.
 # Settings can be overridden with environment variables (defaults below).
@@ -17,6 +18,7 @@ IMAGE="${IMAGE:-Ubuntu-24.04}"
 KEY_NAME="${KEY_NAME:-cpouta}"
 PUBKEY="${PUBKEY:-$HOME/.ssh/cpouta.pub}"
 SECGROUP="${SECGROUP:-tram-ssh}"
+WEB_SECGROUP="${WEB_SECGROUP:-tram-web}"   # used with WEB=1
 VOLUME="${VOLUME:-tram-data}"
 VOLUME_GB="${VOLUME_GB:-25}"
 EXTERNAL_NET="${EXTERNAL_NET:-public}"
@@ -75,6 +77,24 @@ else
 fi
 status="$(os server show "$NAME" -f value -c status)"
 [[ "$status" == ACTIVE ]] || die "server $NAME is $status, expected ACTIVE"
+
+# Optional (WEB=1): open HTTPS to everyone for the public dashboard. SSH stays restricted.
+if [[ "${WEB:-0}" == 1 ]]; then
+    if ! exists security group "$WEB_SECGROUP"; then
+        os security group create --description "HTTPS to the public tram dashboard" "$WEB_SECGROUP" >/dev/null
+        log "Created security group $WEB_SECGROUP"
+    fi
+    if ! os security group rule list "$WEB_SECGROUP" --ingress --protocol tcp -f value -c "Port Range" | grep -q '^443:443$'; then
+        os security group rule create --ingress --protocol tcp --dst-port 443 --remote-ip 0.0.0.0/0 "$WEB_SECGROUP" >/dev/null
+        log "Opened port 443 to everyone in $WEB_SECGROUP"
+    fi
+    if os server show "$NAME" -f value -c security_groups | grep -q "$WEB_SECGROUP"; then
+        log "$NAME already uses $WEB_SECGROUP"
+    else
+        os server add security group "$NAME" "$WEB_SECGROUP"
+        log "Added $WEB_SECGROUP to $NAME"
+    fi
+fi
 
 # Data volume
 if exists volume "$VOLUME"; then

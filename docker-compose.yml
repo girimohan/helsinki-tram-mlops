@@ -5,6 +5,8 @@
 #   TRAM_DATA_DIR   host folder holding raw/ and processed/   (default ./data)
 #   TRAM_MODELS_DIR host folder for trained models             (default ./models)
 #   DASHBOARD_BIND  address the dashboard listens on           (default 127.0.0.1, this machine only)
+#   TRAM_PUBLIC_HOST, COMPOSE_PROFILES=public
+#                   serve the dashboard over HTTPS at this hostname through Caddy (server only)
 
 x-logging: &logging
   driver: json-file
@@ -18,6 +20,8 @@ services:
     command: python -m tram_mlops.ingest
     restart: unless-stopped
     logging: *logging
+    # If memory runs out, the kernel should kill anything but the collector.
+    oom_score_adj: -500
     volumes:
       - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw
 
@@ -25,12 +29,33 @@ services:
     build: .
     restart: unless-stopped
     logging: *logging
+    # Caps what heavy traffic can take from the collector; Docker restarts it if exceeded.
+    mem_limit: 1g
+    environment:
+      TRAM_DASHBOARD_PROCESS_ON_DEMAND: ${TRAM_DASHBOARD_PROCESS_ON_DEMAND:-true}
     ports:
       - "${DASHBOARD_BIND:-127.0.0.1}:8501:8501"
     volumes:
       - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw:ro
       - ${TRAM_DATA_DIR:-./data}/processed:/app/data/processed
       - ${TRAM_MODELS_DIR:-./models}:/app/models:ro
+
+  # HTTPS reverse proxy with automatic Let's Encrypt certificates (deploy/Caddyfile).
+  caddy:
+    image: caddy:2.10-alpine
+    profiles: ["public"]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 128m
+    depends_on: [dashboard]
+    ports:
+      - "443:443"
+    environment:
+      TRAM_PUBLIC_HOST: ${TRAM_PUBLIC_HOST:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
 
   # One-off: docker compose run --rm pipeline
   pipeline:
@@ -42,3 +67,7 @@ services:
       - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw:ro
       - ${TRAM_DATA_DIR:-./data}/processed:/app/data/processed
       - ${TRAM_MODELS_DIR:-./models}:/app/models
+
+volumes:
+  caddy_data:     # certificates; keep them to stay within Let's Encrypt rate limits
+  caddy_config:

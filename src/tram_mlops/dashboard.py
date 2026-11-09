@@ -37,7 +37,7 @@ def _mtime(path: Path) -> float:
 @st.cache_data
 def load_positions(path: Path, mtime: float) -> pd.DataFrame:
     if not path.exists():
-        return process.run(output=path)
+        return process.run(output=path) if LIVE["process_on_demand"] else pd.DataFrame()
     return pd.read_parquet(path)
 
 
@@ -52,7 +52,7 @@ def load_live() -> pd.DataFrame:
 
 
 def filter_lines(df: pd.DataFrame, lines: list[str]) -> pd.DataFrame:
-    return df[df["line"].isin(lines)] if lines else df
+    return df[df["line"].isin(lines)] if lines and not df.empty else df
 
 
 def latest_per_tram(df: pd.DataFrame) -> pd.DataFrame:
