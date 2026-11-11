@@ -8,6 +8,7 @@ sample_file = "data/sample/tram_sample.jsonl.gz"
 processed_dir = "data/processed/positions"
 gtfsrt_dir = "data/raw/gtfsrt"
 predictions_dir = "data/predictions"
+anomalies_dir = "data/anomalies"
 models_dir = "models"
 
 [ingest]
@@ -77,6 +78,33 @@ window_min = 15
 log_every_s = 30
 # Don't forecast trams whose newest observation is older than this.
 max_age_s = 120
+
+[anomaly]
+# Anomaly detection (python -m tram_mlops.anomaly; runs live inside the forecaster). Thresholds come
+# from 10-11 Nov: 99.9% of stops en route last under 168 s away from stops and 127 s at stops.
+still_speed_mps = 0.5
+# A tram standing still en route this long is flagged (termini excluded, trams wait there).
+stopped_min_s = 300
+# Observations further apart than this start a new spell.
+max_gap_s = 60
+# Delay jump: delay gain over jump_window_s above the line x hour median + jump_z robust SDs,
+# and at least jump_min_s (with the 10-11 Nov spread that is about 7 min).
+jump_window_s = 600
+jump_tolerance_s = 60
+jump_min_s = 300
+jump_z = 6.0
+# Anomalous trams this close together form one incident.
+cluster_radius_m = 500
+# Stops within this distance of where a route's trips usually start or end are not anomalies.
+terminus_radius_m = 150
+# A live event ends once its condition hasn't held for this long.
+close_after_s = 120
+max_age_s = 120
+# The baseline (python -m tram_mlops.anomaly baseline, after hourly processing) uses this many
+# recent days, needs this many rows per line x hour cell, and is rebuilt at most this often.
+baseline_days = 14
+baseline_min_rows = 200
+baseline_refresh_h = 24
 
 [dashboard]
 # Live mode reads this much recent raw data straight from the ingester's files.

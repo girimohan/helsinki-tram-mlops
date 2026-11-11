@@ -30,9 +30,22 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-from tram_mlops import alerts, chat, chat_tools, feeds, forecaster, monitoring, process, status, storage
+from tram_mlops import (
+    alerts,
+    anomaly,
+    chat,
+    chat_tools,
+    feeds,
+    forecaster,
+    gtfsrt,
+    monitoring,
+    process,
+    status,
+    storage,
+)
 from tram_mlops.config import load_config, resolve_path
 from tram_mlops.history import History, available_days
+from tram_mlops.network import Network
 from tram_mlops.train import load_latest, predict_delay
 
 log = logging.getLogger(__name__)
@@ -42,6 +55,7 @@ MODELS_DIR = resolve_path(cfg["paths"]["models_dir"])
 RAW_DIR = resolve_path(cfg["paths"]["raw_dir"])
 GTFSRT_DIR = resolve_path(cfg["paths"]["gtfsrt_dir"])
 PREDICTIONS_DIR = resolve_path(cfg["paths"]["predictions_dir"])
+ANOMALIES_DIR = resolve_path(cfg["paths"]["anomalies_dir"])
 # The forecaster's snapshot counts as current if it is at most this old.
 FORECAST_FRESH_S = 120
 LIVE = cfg["dashboard"]
@@ -399,6 +413,89 @@ def render_live_forecast(lines: list[str], now: pd.Timestamp) -> None:
                "(see Model health)")
 
 
+# --- incidents (roadmap E15) -----------------------------------------------------------
+
+def _minutes(seconds: float) -> str:
+    return f"{seconds / 60:.0f} min"
+
+
+def describe_incident(incident: dict[str, Any], now: pd.Timestamp) -> str:
+    """One line for an incident from ``anomaly``: where, which trams, since when, how much time lost."""
+    since = pd.Timestamp(incident["start"])
+    place = f" near {incident['near']}" if incident.get("near") else ""
+    near = f" near **{incident['near']}**" if incident.get("near") else ""
+    lost = f"up to {_minutes(incident['max_delay_gain_s'])} lost"
+    if incident["trams"] >= 2:
+        lines = ", ".join(incident["lines"])
+        return (f"**Disruption{place}**: {incident['trams']} trams on line{'s' if len(incident['lines']) > 1 else ''} "
+                f"{lines} held up since {helsinki(since):%H:%M} ({lost})")
+    what = "standing still" if "stopped" in incident["kinds"] else "losing time unusually fast"
+    return (f"Line {incident['lines'][0]} tram {incident['vehicles'][0]} {what}{near} since "
+            f"{helsinki(since):%H:%M} ({lost})")
+
+
+def render_incidents(lines: list[str], now: pd.Timestamp) -> None:
+    latest = anomaly.read_latest(ANOMALIES_DIR)
+    if not latest:
+        return
+    if (now - pd.Timestamp(latest["issued_at"])).total_seconds() > FORECAST_FRESH_S:
+        st.caption("Incident detection is not running (it is part of the forecaster service).")
+        return
+    found = [i for i in latest.get("incidents", []) if not lines or set(i["lines"]) & set(lines)]
+    if not found:
+        st.caption("No trams stuck en route or losing time unusually fast right now.")
+        return
+    for incident in (i for i in found if i["trams"] >= 2):
+        st.error(describe_incident(incident, now), icon="🚧")
+    single = [i for i in found if i["trams"] < 2]
+    if single:
+        with st.expander(f"{len(single)} tram{'s' if len(single) > 1 else ''} behaving unusually", icon="⚠️"):
+            st.markdown("\n".join(f"- {describe_incident(i, now)}" for i in single))
+            st.caption("Standing still en route for 5+ minutes away from a terminus, or losing time far faster than "
+                       "is usual for the line at this hour. Trams within 500 m of each other form one disruption.")
+
+
+@st.cache_resource(max_entries=2)
+def tram_network_names(mtime: float) -> Network | None:
+    path = GTFSRT_DIR / gtfsrt.NETWORK
+    return Network.load(path) if path.exists() else None
+
+
+def render_incident_history(lines: list[str], days: tuple[date, date]) -> None:
+    st.caption("Trams that stood still en route for 5+ minutes away from a terminus, or lost time far faster than "
+               "usual for their line and hour, as logged live by the forecaster. Trams within 500 m of each other "
+               "at the same time form one incident. A replay over all collected days is in "
+               "`reports/anomalies/latest.md`.")
+    events = anomaly.read_events(ANOMALIES_DIR, days[0], days[1] + timedelta(days=1))
+    if not events.empty and lines:
+        events = events[events["line"].isin(lines)]
+    if events.empty:
+        st.info("No incidents logged for these days. Live detection started on 11 Nov 2026.")
+        return
+    network_path = GTFSRT_DIR / gtfsrt.NETWORK
+    network = tram_network_names(_mtime(network_path))
+    records = [{str(k): v for k, v in r.items()} for r in events.to_dict("records")]
+    found = anomaly.incidents(records, anomaly.Settings.from_config(), network, same_time=True)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Trams flagged", len(events))
+    c2.metric("Incidents", len(found))
+    c3.metric("Disruptions (2+ trams)", sum(i["trams"] >= 2 for i in found))
+    table = pd.DataFrame([{
+        "start": helsinki(pd.Timestamp(i["start"])).tz_localize(None),
+        "minutes": round((pd.Timestamp(i["end"]) - pd.Timestamp(i["start"])).total_seconds() / 60),
+        "trams": i["trams"], "lines": ", ".join(i["lines"]), "near": i["near"] or "",
+        "lost": round(i["max_delay_gain_s"] / 60, 1),
+    } for i in found]).sort_values(["trams", "lost"], ascending=False)
+    st.dataframe(table, hide_index=True, width="stretch", column_config={
+        "start": st.column_config.DatetimeColumn("Started", format="ddd D MMM HH:mm"),
+        "minutes": st.column_config.NumberColumn("Lasted", format="%d min"),
+        "trams": st.column_config.NumberColumn("Trams"),
+        "lines": st.column_config.TextColumn("Lines"),
+        "near": st.column_config.TextColumn("Near"),
+        "lost": st.column_config.NumberColumn("Most time lost", format="%.1f min"),
+    })
+
+
 # --- Live ------------------------------------------------------------------------------
 
 def line_status(now: pd.DataFrame, alert_counts: dict[str, int] | None = None,
@@ -522,6 +619,7 @@ def render_live(lines: list[str]) -> None:
         if lines:
             active = [a for a in active if set(a.lines) & set(lines)]
         render_alerts(active, fetched_at, clock)
+        render_incidents(lines, clock)
 
         left, right = st.columns([1, 1])
         with left:
@@ -740,6 +838,7 @@ def render_history(lines: list[str], days: tuple[date, date] | None) -> None:
         "Time of day": lambda: render_time_of_day(data),
         "Trams": lambda: render_trams(data),
         "Stops": lambda: render_stops(lines),
+        "Incidents": lambda: render_incident_history(lines, days),
     }
     chosen = st.segmented_control("Section", list(sections), default="Overview", key="history_section",
                                   label_visibility="collapsed")
@@ -1013,6 +1112,7 @@ TOOL_LABELS = {
     "service_alerts": "Service alerts",
     "punctuality": "Punctuality history",
     "forecast_accuracy": "Forecast accuracy",
+    "incidents": "Incidents",
 }
 
 

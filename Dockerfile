@@ -17,7 +17,7 @@ COPY data/sample ./data/sample
 # Editable install keeps PROJECT_ROOT at /app so config paths resolve to /app/data, /app/models.
 RUN pip install --no-deps -e .
 
-RUN useradd --create-home app && mkdir -p data/raw data/processed models && chown -R app /app
+RUN useradd --create-home app && mkdir -p data/raw data/processed data/anomalies models && chown -R app /app
 USER app
 
 EXPOSE 8501

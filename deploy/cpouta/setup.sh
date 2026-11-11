@@ -107,7 +107,8 @@ set_env() {
 }
 
 configure() {
-    mkdir -p "$DATA_ROOT/data/raw" "$DATA_ROOT/data/processed" "$DATA_ROOT/data/predictions" "$DATA_ROOT/models"
+    mkdir -p "$DATA_ROOT/data/raw" "$DATA_ROOT/data/processed" "$DATA_ROOT/data/predictions" \
+             "$DATA_ROOT/data/anomalies" "$DATA_ROOT/models"
     chown -R "$APP_UID:$APP_UID" "$DATA_ROOT/data" "$DATA_ROOT/models"
 
     set_env TRAM_DATA_DIR "$DATA_ROOT/data"

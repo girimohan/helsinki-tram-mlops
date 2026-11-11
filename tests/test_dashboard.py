@@ -283,3 +283,38 @@ def test_ask_page_answers_with_the_tools_it_used(isolated_paths, monkeypatch):
     app.chat_input[0].set_value("And line 4?")
     app = open_page(app, "ask")
     assert [m.name for m in app.chat_message] == ["user", "assistant", "user", "assistant"]
+
+
+def test_live_page_shows_detected_incidents(isolated_paths, monkeypatch):
+    now = datetime.now(UTC)
+    write_live_raw(isolated_paths / "raw", now)
+    monkeypatch.setenv("TRAM_PATHS_ANOMALIES_DIR", str(isolated_paths / "anomalies"))
+    load_config.cache_clear()
+    disruption = {"trams": 2, "lines": ["1", "2"], "kinds": ["stopped"], "near": "Lasipalatsi",
+                  "start": (now - timedelta(minutes=8)).isoformat(), "end": now.isoformat(),
+                  "max_delay_gain_s": 420, "vehicles": [1, 2], "lat": 60.17, "lon": 24.94}
+    single = {**disruption, "trams": 1, "lines": ["3"], "vehicles": [3], "kinds": ["delay_jump"], "near": "Kallio"}
+    storage.write_json_atomic(isolated_paths / "anomalies" / "latest.json",
+                              {"issued_at": now.isoformat(), "active": [], "incidents": [disruption, single]})
+    app = AppTest.from_file(DASHBOARD, default_timeout=60).run()
+    assert not app.exception
+    banners = [e.value.split(" held up")[0] for e in app.error]
+    assert banners == ["**Disruption near Lasipalatsi**: 2 trams on lines 1, 2"]
+    # The single tram is listed in the "1 tram behaving unusually" expander.
+    assert any(m.value.startswith("- Line 3 tram 3 losing time unusually fast near **Kallio**") for m in app.markdown)
+
+
+def test_history_incidents_section_lists_logged_events(isolated_paths, monkeypatch):
+    monkeypatch.setenv("TRAM_PATHS_ANOMALIES_DIR", str(isolated_paths / "anomalies"))
+    load_config.cache_clear()
+    app = open_page(AppTest.from_file(DASHBOARD, default_timeout=60).run(), "history")
+    day = app.date_input[0].value[0] if app.date_input else date(2026, 11, 10)
+    start = datetime(day.year, day.month, day.day, 8, 0, tzinfo=UTC)
+    events = [{"kinds": ["stopped"], "vehicle": v, "line": line, "journey_id": f"j{v}", "lat": 60.17, "lon": 24.94,
+               "start": start.isoformat(), "end": (start + timedelta(minutes=9)).isoformat(), "delay_s": 400,
+               "delay_gain_s": 380, "at_stop": False, "doors_open": False} for v, line in ((1, "1"), (2, "2"))]
+    storage.append_gzip_jsonl(isolated_paths / "anomalies" / f"events_{day:%Y-%m-%d}.jsonl.gz", events)
+    app = show_section(app, "Incidents")
+    assert not app.exception
+    metrics = {m.label: m.value for m in app.metric}
+    assert metrics["Trams flagged"] == "2" and metrics["Disruptions (2+ trams)"] == "1"

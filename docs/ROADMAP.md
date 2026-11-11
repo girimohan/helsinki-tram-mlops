@@ -16,9 +16,9 @@ The goal is an end-to-end production MLOps system on a real-world streaming sour
 | Live tram tracking | Done: live map and line status, refreshed every 15 s | E3 (always on, public) |
 | Historical analysis | History view over any range of days (DuckDB), by line and hour of day | E4 (quality reports) |
 | Delay prediction | Gradient boosting, 5 min ahead; backtested day by day against two baselines with bootstrap intervals; beats persistence at every level of current delay | E16 (HSL's own predictions as a benchmark), E13, E14 |
-| Anomaly detection | Not started | E15, with labels from E16 (alerts, cancellations, skipped stops) |
+| Anomaly detection | Live: stuck trams, delay jumps and incidents grouped by place, with a replay report | E15 next steps (recurring-place suppression, evaluation against alerts as they accumulate) |
 | Automated retraining | Manual `train` | E7, E8 |
-| Model monitoring | Offline test metrics only | E6 (live accuracy), E10 (alerts), E11 (drift), E16 (feed freshness) |
+| Model monitoring | Live accuracy against persistence (E6), feed freshness on the System page | E10 (alerts), E11 (drift) |
 | Questions in plain language | Ask page: an LLM answers from six read-only tools over the live and historical data | E18 |
 
 ## Principles
@@ -42,7 +42,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | 7 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | **Done** 2026-11-11 (re-run as data grows) |
 | 7b | [E17 Large-delay weakness](#e17-large-delay-weakness) | 1 d | E5 | **Done** 2026-11-11: absolute-error loss; every delay slice now beats persistence |
 | 8 | [E7 Promotion gate and scheduled retraining](#e7-promotion-gate-and-scheduled-retraining) | 3 d | E2, E5 | Planned |
-| 9 | [E15 Anomaly detection](#e15-anomaly-detection) | 3–4 d | E2, E6, E16, ~2 weeks of data | Planned |
+| 9 | [E15 Anomaly detection](#e15-anomaly-detection) | 3–4 d | E2, E6, E16, ~2 weeks of data | **Done** 2026-11-11 (v1 on 3 days of data; evaluation grows with alerts) |
 | 10 | [E12 Packaging and container hardening](#e12-packaging-and-container-hardening) | 1.5–2 d | none | Planned |
 | 11 | [E8 Experiment tracking and model registry](#e8-experiment-tracking-and-model-registry) | 2–3 d | E7 | Planned |
 | 12 | [E10 Metrics, logs and alerts](#e10-metrics-logs-and-alerts) | 3 d | E3 | Planned |
@@ -321,6 +321,34 @@ Items 1–8 complete the core loop. Item 4 comes early only because its data can
   - an alert through E10
 
 **Changes.** `anomaly.py`, a scoring step in the forecaster loop (E6), a dashboard panel, and `tests/test_anomaly.py` with replayed real incidents as fixtures.
+
+**Done 2026-11-11 (v1).** Built on 3 days of data instead of the planned 2 weeks, because the strongest signal needed no long history.
+- **Exploration** (10–11 Nov, en route):
+  - 99.9% of stops last under 168 s away from stops and 127 s at stops.
+  - Only 16 lasted 5+ minutes, and the longest were real incidents.
+  - A tram's 10-minute delay change has median ~10 s and MAD ~47 s; its 99.9th percentile is 473 s.
+- **Rejected:** the planned line-level signal (a line's median 10-minute delay change as a robust z-score) never flagged the 10 Nov line 3 incident, where the line's maximum z was 1.7. Only the 2–3 trams near the blockage were affected. Grouping flagged trams by place replaced it.
+- **Rules:**
+  - *stopped*: still for 5+ minutes en route
+  - *delay jump*: gain over 10 minutes above the line × hour median + 6 robust SDs, and at least 5 minutes
+  - *incident*: flagged trams within 500 m at the same time, named after the nearest tram stop
+- **False positives found in the replay, and fixed:**
+  - Delay "gains" of 21–32 minutes within 10 minutes are impossible. They are jumps in the delay value, so they now count as data glitches (34 rows on 10 Nov).
+  - Trams waiting at termini, such as line 6 at Eiranranta and line 2 at Olympiaterminaali, were flagged. Termini are now learned per route and direction from where trips start and end, and excluded for both rules.
+- **Replay** (each day judged against a baseline from the other days): 7, 21 and 18 flagged trams on 9, 10 and 11 Nov, and 1–2 incidents with 2+ trams a day. The top three are real:
+  - 10 Nov 14:28: lines 2 and 3 near Kapteeninkatu, 41 min, up to 19 min lost
+  - 11 Nov 16:44: lines 5, 6 and 7 near Lasipalatsi
+  - 11 Nov 17:09: lines 3, 5, 6 and 7 near Päärautatieasema
+- **Weak labels:** one unplanned tram alert so far (line 10, "possible deviations", 15 min), not caught. The scoring code (`reactive_alerts`, `evaluate`) is in place for when more alerts accumulate.
+- **Runs in production:**
+  - the forecaster runs the detector every 15 s and writes `data/anomalies/latest.json`, plus event logs as events end
+  - the baseline is rebuilt daily after hourly processing
+  - Live page banner, History "Incidents" section, and an `incidents` chatbot tool
+- **Next:**
+  - suppress places that recur every night (line 3H near Kansallismuseo at about 01:30 on two nights)
+  - add the model-aware signal (bursts of large forecast errors on a line)
+  - add precision and recall against reactive alerts once there are enough
+  - send an alert through E10
 
 ## E16. HSL realtime feeds: alerts, trip updates and stop events
 

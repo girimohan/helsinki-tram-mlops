@@ -18,6 +18,7 @@ How this project was built, in order: what each stage set out to do, the decisio
 | 11 Nov | [E5 Backtesting](#e5-backtesting-11-nov) | Day-by-day backtest with confidence intervals; found the late-tram weakness | `6fdc0f8` |
 | 11 Nov | [E18 Chat assistant](#e18-chat-assistant-11-nov) | Ask page: an LLM answers tram questions through read-only tools | `1312484`…`b87e2cd` |
 | 11 Nov | [E17 Late-tram weakness](#e17-late-tram-weakness-11-nov) | Absolute-error loss; the model now beats persistence at every delay level | `5afe34b` |
+| 11 Nov | [E15 Anomaly detection](#e15-anomaly-detection-11-nov) | Live incident detection: stuck trams, delay jumps, incidents grouped by place | see the roadmap |
 
 ---
 
@@ -220,6 +221,42 @@ How this project was built, in order: what each stage set out to do, the decisio
 
 ---
 
+## E15 Anomaly detection (11 Nov)
+
+**Goal.** Notice when something is wrong right now: a breakdown, a blocked track, a disruption across several lines. This is the fourth of the six deliverables, and the last one not started. Retraining (E7) is on hold.
+
+**Exploration first.** Thresholds come from the data, not guesses (10–11 Nov, en route):
+- 99.9% of stops last under 168 s, and only 16 lasted 5+ minutes. The longest were real incidents: two line 3 trams stood at the same spot for 21 min with their doors open on 10 Nov.
+- A tram's 10-minute delay change has median ~10 s and MAD ~47 s.
+
+**Built.**
+- `anomaly.py` with three rules:
+  - *stopped*: 5+ min still en route
+  - *delay jump*: 10-min gain above the line × hour median + 6 robust SDs, and at least 5 min
+  - *incident*: flagged trams within 500 m at the same time, named after the nearest stop
+- A daily baseline: delay-change spread per line and hour, plus where each route's trips start and end.
+- Live detection inside the forecaster loop.
+- A replay command that judges each day against the *other* days.
+- A Live page banner, a History "Incidents" section, and an `incidents` chatbot tool.
+- `network.py` now holds the stop names, shared by the chatbot and the detector.
+
+**Key decisions.**
+- **Robust statistics, not a trained model.** Incidents are rare and unlabelled. Median and MAD are explainable and resist outliers.
+- **Group by place, not by line.** The planned line-wide signal never flagged the line 3 incident: only the trams near a blockage are affected, so a line's median barely moves.
+- **Same code live and in replay**, so the report measures what production runs.
+
+**Problems found in the replay, and fixed.**
+- Single trams "gained" 21–32 minutes of delay within 10 minutes. That's impossible (standing still for 10 minutes adds at most 10), so these are jumps in the feed's delay value. They are now counted as glitches.
+- Trams waiting at termini were flagged. Termini are now learned from history and excluded.
+
+**Results.** The replay finds 1–2 incidents with 2+ trams per day, and the largest three are real: 10 Nov 14:28 near Kapteeninkatu (lines 2 and 3, 41 min), and 11 Nov 16:44 and 17:09 around Lasipalatsi and Päärautatieasema (lines 3, 5, 6 and 7). 134 tests pass.
+
+**Limits.**
+- Only one unplanned HSL tram alert exists so far, and it wasn't caught, so precision and recall must wait for more data.
+- A recurring night pattern on variant line 3H is still flagged.
+
+---
+
 ## Lessons across stages
 
 - **Measure on the server's limits, not the laptop's.** Memory drove E2's design, and it's still open for training.
@@ -231,12 +268,19 @@ How this project was built, in order: what each stage set out to do, the decisio
 
 **Running.** On one cPouta VM:
 - **Collection:** the collector and the GTFS-RT archiver
-- **Forecasting:** the forecaster, using the E17 model
+- **Forecasting:** the forecaster, using the E17 model, with the anomaly detector in the same loop
 - **Dashboard:** five pages, behind Caddy
 - **Scheduled jobs:** hourly processing and backups, and deploys on green CI
 
 **Data.** Collected since 9 Nov, weekdays only so far.
 
-**Skipped for now.** E7 (scheduled retraining with a promotion gate). It first needs training to fit in the server's memory.
+**Deliverables.** Five of six are live:
+- live tracking
+- historical analysis
+- delay prediction
+- anomaly detection
+- model monitoring
 
-**Other open items.** See the roadmap's [Status table](ROADMAP.md#status). Next in order: E4 data-quality reports and E15 anomaly detection, which needs about 2 weeks of data. Also: rerun the E5 backtest as weekends and more weeks arrive.
+Automated retraining (E7) is on hold; it first needs training to fit in the server's memory.
+
+**Other open items.** See the roadmap's [Status table](ROADMAP.md#status). Next in order: E4 data-quality reports, E10 alerts and E11 drift for monitoring, and the E15 follow-ups. Also: rerun the E5 backtest and the anomaly replay as weekends and more weeks arrive.

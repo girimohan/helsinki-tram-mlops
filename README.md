@@ -19,6 +19,7 @@ An end-to-end pipeline for real-time data and machine learning. It collects **li
 - **Real data, streamed live.** Subscribes to Helsinki Region Transport's public [high-frequency positioning feed](https://digitransit.fi/en/developers/apis/5-realtime-api/vehicle-positions/) over MQTT (about 100 messages per second).
 - **Complete MLOps loop.** Ingest → process → train → versioned model → dashboard, with config files, tests, CI and Docker.
 - **Honest evaluation.** The model is compared with a persistence baseline on a time-based split that prevents leakage, and results are broken down by segment. The breakdown exposes where the model really helps and where it barely does ([details](#model)).
+- **Incidents spotted as they happen.** Trams stuck en route or losing time far faster than usual are flagged live and grouped by place, e.g. "4 trams on lines 5, 6, 7 held up near Lasipalatsi" ([details](#anomaly-detection)).
 - **Data-quality fixes found in the raw feed.** The feed uses an inverted sign for delay, contains stale journey sign-ins that look like 2‑hour delays, and delivers duplicate messages. Each is handled and covered by a test ([details](#data-quality-findings)).
 
 ## Contents
@@ -27,6 +28,7 @@ An end-to-end pipeline for real-time data and machine learning. It collects **li
 - [Quick start](#quick-start)
 - [Dashboard](#dashboard)
 - [Model](#model)
+- [Anomaly detection](#anomaly-detection)
 - [Data-quality findings](#data-quality-findings)
 - [Project structure](#project-structure)
 - [Configuration](#configuration)
@@ -55,7 +57,7 @@ flowchart LR
 | Stage | Command | What it does |
 |---|---|---|
 | **Ingest** | `python -m tram_mlops.ingest` | Subscribes to all tram positions over TLS, keeps one per tram every 10 s, and appends to one JSONL file per day. Also keeps every stop and journey event (arrivals, departures, journey sign-in and sign-off, traffic-light priority) in a separate daily file. Reconnects automatically if the connection drops. |
-| **Forecast** | `python -m tram_mlops.forecaster` | Forecasts every tram's delay 5 min ahead every 15 s, logs the forecasts and scores each one against what happened 5 min later. `python -m tram_mlops.monitoring` prints the live accuracy against the persistence baseline. |
+| **Forecast** | `python -m tram_mlops.forecaster` | Forecasts every tram's delay 5 min ahead every 15 s, logs the forecasts and scores each one against what happened 5 min later. `python -m tram_mlops.monitoring` prints the live accuracy against the persistence baseline. In the same loop, flags trams stuck en route or losing time unusually fast ([anomaly detection](#anomaly-detection)). |
 | **Archive GTFS-RT** | `python -m tram_mlops.gtfsrt` | Records HSL's service alerts and the tram part of its trip updates (HSL's own arrival predictions), keeping only what changed. Nobody else archives these feeds. |
 | **Process** | `python -m tram_mlops.process` | Parses and deduplicates records, fixes the delay sign, removes stale journeys and converts times to Helsinki local time. Writes one Parquet partition per day with a fixed schema, and skips days that haven't changed since the last run (`--since`, `--rebuild` to reprocess). |
 | **Train** | `python -m tram_mlops.train` | Builds features from the most recent days, splits by time, trains gradient boosting, compares it with the baseline, and saves a versioned model. |
@@ -106,10 +108,11 @@ Five pages, each with its own URL (`/`, `/ask`, `/history`, `/model-health`, `/s
 - live forecasts
 - **HSL service alerts** for tram lines that are in force now: disruptive ones as banners, all of them in a list with their effect, cause, end time and link
 - **disruptions per line** on the status board: ⚠️ alerts in force, and trips HSL has **cancelled** today (from GTFS-RT trip updates)
+- **incidents this project detects itself**: a red banner when 2+ trams are held up near the same place, and a list of single trams behaving unusually ([anomaly detection](#anomaly-detection))
 
 An alert counts as a tram alert when it names a tram route (including lettered variants such as `1011H`). Some alerts name only stops; those are assigned to the lines seen at those stops in the positions data. A bus alert that lists a shared stop is not counted.
 
-**Ask** (`/ask`): a chat window for questions such as *"When is the next tram at Lasipalatsi?"*, *"How is line 4 doing?"* or *"Which line was least punctual this week?"*. An LLM (Groq's free tier by default, any OpenAI-compatible API works) chooses among six read-only tools and writes the answer from what they return; it never sees the data otherwise and cannot run queries of its own.
+**Ask** (`/ask`): a chat window for questions such as *"When is the next tram at Lasipalatsi?"*, *"How is line 4 doing?"* or *"Which line was least punctual this week?"*. An LLM (Groq's free tier by default, any OpenAI-compatible API works) chooses among seven read-only tools and writes the answer from what they return; it never sees the data otherwise and cannot run queries of its own.
 
 | Tool | Answers from |
 |---|---|
@@ -119,15 +122,17 @@ An alert counts as a tram alert when it names a tram route (including lettered v
 | `service_alerts` | HSL's service alerts for trams in force now |
 | `punctuality` | The processed history, by line, hour of day or day |
 | `forecast_accuracy` | The forecaster's scored forecasts against persistence |
+| `incidents` | Incidents the anomaly detector sees now and found earlier today |
 
 Each answer lists the lookups behind it. Stop names come from static GTFS, since the realtime feeds use ids only. The GTFS-RT archiver keeps the latest poll of tram trips in one small file, so a lookup takes milliseconds instead of scanning the day's archive (about 19 s). Visitors share one free API quota, so questions are capped per minute, per day and per visit (`[chat]` in the config). Without an API key the page explains how to add one.
 
-**History** (`/history`): KPIs for a chosen range of days, then five sections. Only the open section is computed:
+**History** (`/history`): KPIs for a chosen range of days, then six sections. Only the open section is computed:
 - **Overview:** on-time share and mean delay per service day, delay over time, and the delay distribution coloured early, on time and late
 - **Lines:** a heatmap of on-time share by line and hour of day, and a reliability table per line (on time, mean and 90th-percentile delay, share more than 3 minutes late)
 - **Time of day:** delay and punctuality by hour, weekdays against weekends
 - **Trams:** the map of latest positions, the most delayed trams and the forecast panel (model accuracy against the baseline, and each tram's forecast delay 5 minutes ahead)
 - **Stops:** arrival delay at each stop over the last 24 hours, computed from HFP stop events (arrival time minus scheduled arrival), on a map and as a table of the latest-running stops
+- **Incidents:** the events the anomaly detector logged on those days, grouped into incidents, with where, how long and how much time was lost
 
 **System** (`/system`): the production side of the pipeline:
 - a diagram of the services
@@ -195,6 +200,38 @@ vs persistence **-5.8 s [-6.0, -5.7]**, vs line × hour **-5.7 s [-5.9, -5.6]**.
 - **Weekdays only so far.** Every backtest records the full breakdown by hour, line, weekday vs weekend and current delay in `reports/backtest/<run>.json`. Every training run also records the segment breakdown in `metrics.json`.
 - **Live accuracy** is measured separately. The deployed forecaster scores each of its forecasts 5 minutes later, and the dashboard's *Model health* page shows the result.
 
+## Anomaly detection
+
+Forecasting answers "how late will this tram be?". Anomaly detection answers "is something wrong right now?". Incidents are rare and unlabelled, so the detector uses robust statistics from the collected history instead of a trained model. All its thresholds are set in `[anomaly]` in the config.
+
+- **Stopped:** a tram en route stands still for 5+ minutes away from a terminus. In normal service, 99.9% of such stops are shorter than 3 minutes.
+- **Delay jump:** a tram's delay grows over 10 minutes by more than its line's median plus 6 robust standard deviations (MAD) for that hour, and by at least 5 minutes. A gain bigger than the window itself is physically impossible: it is a jump in the feed's delay value, so it is counted as a data glitch instead.
+- **Incident:** flagged trams within 500 m of each other at the same time, named after the nearest stop. A blockage affects only the few trams near it, so a line-wide average hides it (tested and rejected); grouping by place shows it.
+- **Termini:** trams waiting at the ends of their routes are not anomalies. Where each route's trips start and end is learned from the history.
+
+**How it runs.**
+- Detection runs inside the forecaster every 15 s.
+- Events stay open while their condition holds, then are logged to `data/anomalies/events_YYYY-MM-DD.jsonl.gz`.
+- The baseline (spread of delay change per line and hour, plus route termini) is rebuilt daily after processing.
+
+**Replay.** `python -m tram_mlops.anomaly replay` runs the same code over all collected days, judging each day against a baseline built from the *other* days.
+
+<!-- anomaly:start -->
+Replay of 9–11 Nov 2026 (`reports/anomalies/latest.md`): 1–2 multi-tram incidents per day. The largest are real:
+
+| Start (Helsinki) | Duration | Trams | Lines | Near | Most time lost |
+|---|---:|---:|---|---|---:|
+| Tue 10 Nov 14:28 | 41 min | 4 | 2, 3 | Kapteeninkatu | 19.2 min |
+| Wed 11 Nov 16:44 | 22 min | 4 | 5, 6, 7 | Lasipalatsi | 11.0 min |
+| Wed 11 Nov 17:09 | 14 min | 4 | 3, 5, 6, 7 | Päärautatieasema | 8.4 min |
+
+On 10 Nov, two line 3 trams stood at the same spot near Eira for 21 minutes with their doors open while their delay grew from 1 to 20 minutes.
+<!-- anomaly:end -->
+
+**Limits so far.**
+- HSL published only one unplanned tram alert in these days ("Line 10, possible deviations"), and the detector didn't catch it. Precision and recall against HSL's alerts need weeks of data.
+- A recurring night pattern on variant line 3H (~01:30 near Kansallismuseo) is still flagged. Suppressing places that recur every night is planned once more nights are collected.
+
 ## Data-quality findings
 
 Exploring the raw feed turned up several problems that silently distort results if left in. Each fix is covered by a test.
@@ -228,6 +265,8 @@ helsinki-tram-mlops/
 │   ├── alerts.py        # HSL service alerts that affect tram lines, active now
 │   ├── feeds.py         # DuckDB queries over raw stop events and trip updates
 │   ├── status.py        # data-source freshness and processing runs for the System page
+│   ├── anomaly.py       # stuck trams, delay jumps and incidents: baseline, live detector, replay
+│   ├── network.py       # stop, line and destination names from static GTFS
 │   ├── chat_tools.py    # read-only lookups the Ask page's LLM can call
 │   ├── chat.py          # tool-calling loop over an OpenAI-compatible chat API (Groq by default)
 │   ├── features.py      # leakage-free features and 5-min-ahead target
@@ -236,7 +275,7 @@ helsinki-tram-mlops/
 │   ├── dashboard.py     # Streamlit app: Live, Ask, History, Model health, System
 │   └── config.py        # TOML config with env-var overrides
 ├── configs/config.toml  # every tunable setting
-├── tests/               # 124 pytest tests, including dashboard and end-to-end pipeline tests
+├── tests/               # 135 pytest tests, including dashboard and end-to-end pipeline tests
 ├── scripts/             # sample cutter, README figures and screenshots
 ├── data/sample/         # 45-min sample of real data (10 Nov 2026, 07:30–08:15)
 ├── docs/                # ROADMAP.md, DEVELOPMENT_LOG.md, README figures and screenshots
@@ -258,7 +297,7 @@ TRAM_INGEST_SAMPLE_INTERVAL_S=5 python -m tram_mlops.ingest
 
 ```bash
 pip install -r requirements-dev.txt   # pinned test, lint and type-check tools
-pytest --cov                          # 124 tests, about 45 s; fails below 80% coverage
+pytest --cov                          # 135 tests, about 65 s; fails below 80% coverage
 ruff check src tests scripts
 mypy
 pre-commit install                    # run ruff, mypy and file checks on every commit

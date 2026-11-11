@@ -198,3 +198,29 @@ def test_tool_schemas_match_the_methods():
         spec = tool["function"]
         assert callable(getattr(TramData, spec["name"]))
         assert set(spec["parameters"].get("required", [])) <= set(spec["parameters"]["properties"])
+
+
+def test_incidents_now_and_earlier_today(data, tmp_path):
+    assert "error" in call_tool(data, "incidents", {})
+    data.anomalies_dir = tmp_path / "anomalies"
+    incident = {"trams": 2, "lines": ["3", "6"], "kinds": ["stopped"], "near": "Eiran sairaala",
+                "start": (NOW - pd.Timedelta(minutes=12)).isoformat(), "end": NOW.isoformat(),
+                "max_delay_gain_s": 540, "vehicles": [1, 2], "lat": 60.158, "lon": 24.941}
+    storage.write_json_atomic(data.anomalies_dir / "latest.json",
+                              {"issued_at": NOW.isoformat(), "active": [], "incidents": [incident]})
+    ended = {"kinds": ["stopped"], "vehicle": 7, "line": "4", "journey_id": "j", "lat": 60.17, "lon": 24.93,
+             "start": "2026-11-11T08:00:00+00:00", "end": "2026-11-11T08:09:00+00:00", "delay_s": 400,
+             "delay_gain_s": 380, "at_stop": False, "doors_open": False}
+    yesterday = {**ended, "start": "2026-11-10T08:00:00+00:00", "end": "2026-11-10T08:09:00+00:00"}
+    storage.append_gzip_jsonl(data.anomalies_dir / "events_2026-11-11.jsonl.gz", [ended])
+    storage.append_gzip_jsonl(data.anomalies_dir / "events_2026-11-10.jsonl.gz", [yesterday])
+
+    out = call_tool(data, "incidents", {})
+    assert out["now"] == [{"trams": 2, "lines": ["3", "6"], "near": "Eiran sairaala", "what": ["standing still"],
+                           "since": "11:48", "lasted_min": 12, "most_time_lost_min": 9.0}]
+    assert out["earlier_today"]["incidents"] == 1  # yesterday's event is not today's
+    assert out["earlier_today"]["largest"][0]["since"] == "10:00"
+    assert call_tool(data, "incidents", {"line": "9"})["now"] == []
+
+    data.clock = lambda: NOW + pd.Timedelta(minutes=10)
+    assert "note" in call_tool(data, "incidents", {})  # the detector's snapshot is stale

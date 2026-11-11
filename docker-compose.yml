@@ -41,7 +41,8 @@ services:
     volumes:
       - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw
 
-  # Forecasts every tram every 15 s and scores each forecast 5 min later (roadmap E6).
+  # Forecasts every tram every 15 s and scores each forecast 5 min later (roadmap E6), and
+  # flags trams stuck en route and incidents on the same data (roadmap E15).
   forecaster:
     build: .
     image: tram-mlops:local
@@ -52,6 +53,7 @@ services:
     volumes:
       - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw:ro
       - ${TRAM_DATA_DIR:-./data}/predictions:/app/data/predictions
+      - ${TRAM_DATA_DIR:-./data}/anomalies:/app/data/anomalies
       - ${TRAM_MODELS_DIR:-./models}:/app/models:ro
 
   dashboard:
@@ -71,6 +73,7 @@ services:
       - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw:ro
       - ${TRAM_DATA_DIR:-./data}/processed:/app/data/processed
       - ${TRAM_DATA_DIR:-./data}/predictions:/app/data/predictions:ro
+      - ${TRAM_DATA_DIR:-./data}/anomalies:/app/data/anomalies:ro
       - ${TRAM_MODELS_DIR:-./models}:/app/models:ro
 
   # HTTPS reverse proxy with automatic Let's Encrypt certificates (deploy/Caddyfile).
@@ -92,10 +95,11 @@ services:
 
   # Hourly from tram-process.timer (deploy/cpouta/): gzip raw days older than yesterday,
   # then rebuild only the day partitions whose raw file changed. A full day peaks at ~0.8 GB.
+  # Then, at most once a day, rebuild the anomaly baseline from the recent partitions.
   process:
     build: .
     image: tram-mlops:local
-    command: python -m tram_mlops.process --compact
+    command: sh -c "python -m tram_mlops.process --compact && python -m tram_mlops.anomaly baseline"
     profiles: ["jobs"]
     logging: *logging
     mem_limit: 1200m
@@ -104,6 +108,7 @@ services:
     volumes:
       - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw
       - ${TRAM_DATA_DIR:-./data}/processed:/app/data/processed
+      - ${TRAM_DATA_DIR:-./data}/anomalies:/app/data/anomalies
 
   # One-off: docker compose run --rm pipeline
   pipeline:

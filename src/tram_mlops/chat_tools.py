@@ -12,17 +12,16 @@ None of them runs a query the model writes, and none of them changes anything.
 - ``service_alerts``: HSL's service alerts for trams in force now
 - ``punctuality``: on-time share and delay over past days, by line, hour or day
 - ``forecast_accuracy``: how the delay model is doing against persistence
+- ``incidents``: trams stuck en route or losing time fast, and the incidents they form (``anomaly``)
 
 Stop names come from static GTFS (``gtfsrt.NETWORK``); the realtime feeds use ids only.
 """
 
 from __future__ import annotations
 
-import difflib
 import json
 import os
 import re
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -31,24 +30,17 @@ from typing import Any
 
 import pandas as pd
 
-from tram_mlops import alerts, forecaster, gtfsrt, monitoring, process
+from tram_mlops import alerts, anomaly, forecaster, gtfsrt, monitoring, process
 from tram_mlops.config import load_config, resolve_path
 from tram_mlops.history import History, available_days
+from tram_mlops.network import Network, StopGroup, normalize  # noqa: F401  (re-exported)
 
-TRAM_VEHICLE_TYPES = {"0", "900"}
 # Older trip predictions than this are flagged as stale (the poller fetches every 30 s).
 STALE_TRIPS_S = 180
 FORECAST_FRESH_S = 120
 
 
 # --- names -----------------------------------------------------------------------------
-
-def normalize(text: str) -> str:
-    """Lower case, no accents, single spaces: ``"Töölön tulli"`` -> ``"toolon tulli"``."""
-    decomposed = unicodedata.normalize("NFKD", text)
-    plain = "".join(ch for ch in decomposed if not unicodedata.combining(ch)).casefold()
-    return " ".join(re.sub(r"[^0-9a-z]+", " ", plain).split())
-
 
 def normalize_line(line: str | None) -> str | None:
     """``"Tram 4"``, ``"line 4"``, ``" 4t "`` -> ``"4"``, ``"4"``, ``"4T"``; empty -> None."""
@@ -57,80 +49,6 @@ def normalize_line(line: str | None) -> str | None:
     text = re.sub(r"(?i)\b(tram|line|raitiovaunu|linja|no\.?|number)\b", " ", str(line))
     text = text.replace("#", " ").strip().upper()
     return text.replace(" ", "") or None
-
-
-@dataclass
-class StopGroup:
-    """All tram platforms sharing one name, e.g. both directions of Lasipalatsi."""
-    name: str
-    ids: list[str]
-    score: float
-
-
-@dataclass
-class Network:
-    routes: dict[str, dict[str, str]] = field(default_factory=dict)
-    headsigns: dict[str, str] = field(default_factory=dict)
-    stops: dict[str, list[Any]] = field(default_factory=dict)
-
-    @classmethod
-    def load(cls, path: Path) -> Network:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return cls(data.get("routes", {}), data.get("headsigns", {}), data.get("stops", {}))
-
-    def line_of(self, route: str) -> str | None:
-        """Line name of a GTFS route, also for lettered variants static GTFS doesn't list."""
-        route_lines = {r: v["line"] for r, v in self.routes.items()}
-        return alerts.line_for_route(route, route_lines)
-
-    def stop_name(self, stop_id: str) -> str:
-        stop = self.stops.get(stop_id)
-        return str(stop[0]) if stop else stop_id
-
-    def destination(self, route: str, direction: Any, stops: list[list[Any]]) -> str:
-        """Where a trip is heading: its usual headsign, else the name of its last stop."""
-        headsign = self.headsigns.get(f"{route}|{direction}")
-        if headsign:
-            return headsign
-        return self.stop_name(str(stops[-1][0])) if stops else "?"
-
-    def tram_stop_ids(self, extra: set[str] | None = None) -> set[str]:
-        """Stops typed as tram stops, plus those trams are scheduled at now (``extra``)."""
-        typed = {sid for sid, s in self.stops.items() if len(s) > 5 and s[5] in TRAM_VEHICLE_TYPES}
-        return typed | ((extra or set()) & self.stops.keys())
-
-    def find_stops(self, query: str, tram_ids: set[str]) -> list[StopGroup]:
-        """Tram stops matching ``query`` by name, stop code (``H0102``) or id, best match first."""
-        q = normalize(query)
-        if not q:
-            return []
-        by_name: dict[str, list[str]] = {}
-        for sid in tram_ids:
-            by_name.setdefault(self.stop_name(sid), []).append(sid)
-        scores: dict[str, float] = {}
-        for name, ids in by_name.items():
-            n = normalize(name)
-            codes = {normalize(str(self.stops[s][1])) for s in ids} | {normalize(s) for s in ids}
-            if n == q or q in codes:
-                score = 3.0
-            elif n.startswith(q) or q.startswith(n + " "):
-                score = 2.0
-            elif q in n or any(word == q for word in n.split()):
-                score = 1.0
-            else:
-                continue
-            scores[name] = score
-        if not scores:
-            # Typos: "lasipalatsi" for "Lasipalatsi" is caught above, "lasipalatsy" here.
-            names = {normalize(name): name for name in by_name}
-            for close in difflib.get_close_matches(q, list(names), n=3, cutoff=0.75):
-                scores[names[close]] = 0.5
-        groups = [StopGroup(name, sorted(by_name[name]), score) for name, score in scores.items()]
-        return sorted(groups, key=lambda g: (-g.score, len(g.name), g.name))
-
-    def similar_stop_names(self, query: str, tram_ids: set[str], n: int = 5) -> list[str]:
-        names = {normalize(self.stop_name(s)): self.stop_name(s) for s in tram_ids}
-        return [names[m] for m in difflib.get_close_matches(normalize(query), list(names), n=n, cutoff=0.5)]
 
 
 def _journey(route: str, direction: Any, day: str, start: str) -> tuple[str, str, str, str]:
@@ -165,6 +83,7 @@ class TramData:
     on_time_window: tuple[int, int] = (-60, 180)
     in_service_s: float = 120
     live_window_min: float = 15
+    anomalies_dir: Path | None = None
     clock: Callable[[], pd.Timestamp] = field(default=lambda: pd.Timestamp.now(tz="UTC"))
     _cache: dict[str, tuple[float, Any]] = field(default_factory=dict, repr=False)
 
@@ -178,6 +97,7 @@ class TramData:
             predictions_dir=resolve_path(paths["predictions_dir"]), tz=proc["timezone"],
             on_time_window=(proc["on_time_min_s"], proc["on_time_max_s"]),
             in_service_s=dash["in_service_s"], live_window_min=dash["live_window_min"],
+            anomalies_dir=resolve_path(paths["anomalies_dir"]),
         )
 
     # -- cached sources --
@@ -516,6 +436,43 @@ class TramData:
                 }
         return out
 
+    def incidents(self, line: str | None = None) -> dict[str, Any]:
+        if self.anomalies_dir is None:
+            return {"error": "Incident detection is not configured."}
+        now = self.clock()
+        wanted = normalize_line(line)
+
+        def keep(incident: dict[str, Any]) -> bool:
+            return not wanted or wanted in {x.upper() for x in incident["lines"]}
+
+        def brief(incident: dict[str, Any]) -> dict[str, Any]:
+            start, end = pd.Timestamp(incident["start"]), pd.Timestamp(incident["end"])
+            return {"trams": incident["trams"], "lines": incident["lines"], "near": incident.get("near"),
+                    "what": ["standing still" if k == "stopped" else "losing time fast" for k in incident["kinds"]],
+                    "since": f"{self._local(start):%H:%M}", "lasted_min": round((end - start).total_seconds() / 60),
+                    "most_time_lost_min": _minutes(incident["max_delay_gain_s"])}
+
+        out: dict[str, Any] = {
+            "what": "Trams standing still en route for 5+ minutes away from a terminus, or losing time far faster "
+                    "than usual for their line and hour. Trams within 500 m of each other form one incident; "
+                    "2+ trams is a disruption. Detected by this project, not announced by HSL.",
+        }
+        latest = anomaly.read_latest(self.anomalies_dir)
+        if latest and (now - pd.Timestamp(latest["issued_at"])).total_seconds() <= FORECAST_FRESH_S:
+            out["now"] = [brief(i) for i in latest.get("incidents", []) if keep(i)]
+        else:
+            out["note"] = "Live incident detection is not running right now."
+        midnight = self._local(now).normalize().tz_convert("UTC")
+        events = anomaly.read_events(self.anomalies_dir, midnight.date(), now.date())
+        if not events.empty:
+            events = events[events["start"] >= midnight]
+        records = [{str(k): v for k, v in r.items()} for r in events.to_dict("records")]
+        earlier = [i for i in anomaly.incidents(records, anomaly.Settings(), self.network(), same_time=True)
+                   if keep(i)]
+        out["earlier_today"] = {"incidents": len(earlier), "disruptions": sum(i["trams"] >= 2 for i in earlier),
+                                "largest": [brief(i) for i in earlier[:5]]}
+        return out
+
 
 # --- tool definitions ------------------------------------------------------------------
 
@@ -564,6 +521,12 @@ TOOLS: list[dict[str, Any]] = [
         "description": "How accurate this project's 5-minute delay forecasts have been in the last hour and "
                        "24 hours, compared with assuming the delay stays the same.",
         "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "incidents",
+        "description": "Unusual events this project detects in the live data: trams stuck en route or losing "
+                       "time unusually fast, grouped by place into incidents, now and earlier today. Use for "
+                       "'is anything wrong', 'why is line X so late', 'any disruptions'.",
+        "parameters": {"type": "object", "properties": {"line": _LINE}}}},
 ]
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 

@@ -1,0 +1,452 @@
+{
+  "run": "20261111T195247Z",
+  "settings": {
+    "still_speed_mps": 0.5,
+    "stopped_min_s": 300,
+    "max_gap_s": 60,
+    "jump_window_s": 600,
+    "jump_tolerance_s": 60,
+    "jump_min_s": 300,
+    "jump_z": 6.0,
+    "cluster_radius_m": 500,
+    "terminus_radius_m": 150,
+    "close_after_s": 120,
+    "max_age_s": 120,
+    "baseline_days": 14,
+    "baseline_min_rows": 200,
+    "baseline_refresh_h": 24
+  },
+  "days": [
+    {
+      "day": "2026-11-09",
+      "events": 7,
+      "stopped": 2,
+      "delay_jump": 6,
+      "incidents": 6,
+      "multi_tram_incidents": 1,
+      "tram_hours": 265.3
+    },
+    {
+      "day": "2026-11-10",
+      "events": 21,
+      "stopped": 6,
+      "delay_jump": 19,
+      "incidents": 18,
+      "multi_tram_incidents": 1,
+      "tram_hours": 2052.7
+    },
+    {
+      "day": "2026-11-11",
+      "events": 18,
+      "stopped": 8,
+      "delay_jump": 14,
+      "incidents": 12,
+      "multi_tram_incidents": 2,
+      "tram_hours": 1828.1
+    }
+  ],
+  "top_incidents": [
+    {
+      "trams": 4,
+      "lines": [
+        "2",
+        "3"
+      ],
+      "kinds": [
+        "delay_jump",
+        "stopped"
+      ],
+      "near": "Kapteeninkatu",
+      "lat": 60.158349,
+      "lon": 24.943648,
+      "start": "2026-11-10T12:28:29+00:00",
+      "end": "2026-11-10T13:09:16+00:00",
+      "max_delay_gain_s": 1150,
+      "vehicles": [
+        75,
+        94,
+        455,
+        456
+      ]
+    },
+    {
+      "trams": 4,
+      "lines": [
+        "5",
+        "6",
+        "7"
+      ],
+      "kinds": [
+        "delay_jump",
+        "stopped"
+      ],
+      "near": "Lasipalatsi",
+      "lat": 60.169895,
+      "lon": 24.938269,
+      "start": "2026-11-11T14:44:38+00:00",
+      "end": "2026-11-11T15:06:14+00:00",
+      "max_delay_gain_s": 660,
+      "vehicles": [
+        101,
+        425,
+        430,
+        453
+      ]
+    },
+    {
+      "trams": 4,
+      "lines": [
+        "3",
+        "5",
+        "6",
+        "7"
+      ],
+      "kinds": [
+        "delay_jump",
+        "stopped"
+      ],
+      "near": "P\u00e4\u00e4rautatieasema",
+      "lat": 60.170407,
+      "lon": 24.940756,
+      "start": "2026-11-11T15:09:23+00:00",
+      "end": "2026-11-11T15:23:44+00:00",
+      "max_delay_gain_s": 505,
+      "vehicles": [
+        409,
+        421,
+        462,
+        472
+      ]
+    },
+    {
+      "trams": 2,
+      "lines": [
+        "4",
+        "5"
+      ],
+      "kinds": [
+        "delay_jump",
+        "stopped"
+      ],
+      "near": "Kauppiaankatu",
+      "lat": 60.166796,
+      "lon": 24.964676,
+      "start": "2026-11-09T20:01:24+00:00",
+      "end": "2026-11-09T20:08:20+00:00",
+      "max_delay_gain_s": 460,
+      "vehicles": [
+        420,
+        637
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "3H"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Kansallismuseo",
+      "lat": 60.174996,
+      "lon": 24.932541,
+      "start": "2026-11-09T23:50:04+00:00",
+      "end": "2026-11-09T23:59:52+00:00",
+      "max_delay_gain_s": 660,
+      "vehicles": [
+        440
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "3"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "P\u00e4\u00e4rautatieasema",
+      "lat": 60.170366,
+      "lon": 24.940929,
+      "start": "2026-11-10T13:08:05+00:00",
+      "end": "2026-11-10T13:12:26+00:00",
+      "max_delay_gain_s": 660,
+      "vehicles": [
+        94
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "3H"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Kansallismuseo",
+      "lat": 60.173375,
+      "lon": 24.934033,
+      "start": "2026-11-10T23:30:18+00:00",
+      "end": "2026-11-10T23:35:22+00:00",
+      "max_delay_gain_s": 659,
+      "vehicles": [
+        468
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "4"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Kansanel\u00e4kelaitos",
+      "lat": 60.188912,
+      "lon": 24.917507,
+      "start": "2026-11-10T06:38:33+00:00",
+      "end": "2026-11-10T06:39:45+00:00",
+      "max_delay_gain_s": 656,
+      "vehicles": [
+        466
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "3"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Kallion virastotalo",
+      "lat": 60.181123,
+      "lon": 24.950206,
+      "start": "2026-11-09T22:38:40+00:00",
+      "end": "2026-11-09T22:42:51+00:00",
+      "max_delay_gain_s": 651,
+      "vehicles": [
+        461
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "1"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Ylioppilastalo",
+      "lat": 60.168948,
+      "lon": 24.940038,
+      "start": "2026-11-11T18:42:10+00:00",
+      "end": "2026-11-11T18:43:43+00:00",
+      "max_delay_gain_s": 621,
+      "vehicles": [
+        106
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "7"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Lasipalatsi",
+      "lat": 60.170059,
+      "lon": 24.938902,
+      "start": "2026-11-11T06:16:40+00:00",
+      "end": "2026-11-11T06:18:34+00:00",
+      "max_delay_gain_s": 620,
+      "vehicles": [
+        416
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "3H"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Kansallismuseo",
+      "lat": 60.175255,
+      "lon": 24.932297,
+      "start": "2026-11-09T23:33:35+00:00",
+      "end": "2026-11-09T23:39:32+00:00",
+      "max_delay_gain_s": 605,
+      "vehicles": [
+        450
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "3H"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Lasipalatsi",
+      "lat": 60.170934,
+      "lon": 24.936963,
+      "start": "2026-11-10T23:52:25+00:00",
+      "end": "2026-11-10T23:56:58+00:00",
+      "max_delay_gain_s": 605,
+      "vehicles": [
+        452
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "12"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Kuusitie",
+      "lat": 60.19619,
+      "lon": 24.904297,
+      "start": "2026-11-10T18:03:06+00:00",
+      "end": "2026-11-10T18:17:52+00:00",
+      "max_delay_gain_s": 600,
+      "vehicles": [
+        642
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "3"
+      ],
+      "kinds": [
+        "delay_jump",
+        "stopped"
+      ],
+      "near": "Kauppatori",
+      "lat": 60.167428,
+      "lon": 24.95197,
+      "start": "2026-11-10T12:44:07+00:00",
+      "end": "2026-11-10T12:56:09+00:00",
+      "max_delay_gain_s": 599,
+      "vehicles": [
+        433
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "2"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Kansanel\u00e4kelaitos",
+      "lat": 60.186906,
+      "lon": 24.920732,
+      "start": "2026-11-10T08:34:48+00:00",
+      "end": "2026-11-10T08:37:56+00:00",
+      "max_delay_gain_s": 573,
+      "vehicles": [
+        110
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "6"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Telakkakatu",
+      "lat": 60.157616,
+      "lon": 24.933516,
+      "start": "2026-11-11T07:20:16+00:00",
+      "end": "2026-11-11T07:24:01+00:00",
+      "max_delay_gain_s": 569,
+      "vehicles": [
+        451
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "6"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Arabiankatu",
+      "lat": 60.20672,
+      "lon": 24.973852,
+      "start": "2026-11-11T05:47:11+00:00",
+      "end": "2026-11-11T05:52:02+00:00",
+      "max_delay_gain_s": 544,
+      "vehicles": [
+        79
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "3"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Hakaniemi",
+      "lat": 60.179401,
+      "lon": 24.950116,
+      "start": "2026-11-09T23:12:10+00:00",
+      "end": "2026-11-09T23:12:20+00:00",
+      "max_delay_gain_s": 540,
+      "vehicles": [
+        456
+      ]
+    },
+    {
+      "trams": 1,
+      "lines": [
+        "3"
+      ],
+      "kinds": [
+        "delay_jump"
+      ],
+      "near": "Mikonkatu",
+      "lat": 60.170447,
+      "lon": 24.943376,
+      "start": "2026-11-10T13:19:02+00:00",
+      "end": "2026-11-10T13:20:56+00:00",
+      "max_delay_gain_s": 540,
+      "vehicles": [
+        456
+      ]
+    }
+  ],
+  "labels": {
+    "alerts": 1,
+    "caught": 0,
+    "details": [
+      {
+        "id": "333644",
+        "lines": [
+          "10",
+          "10H"
+        ],
+        "start": "2026-11-11T09:31:00+00:00",
+        "end": "2026-11-11T09:45:00+00:00",
+        "seen": "2026-11-11T09:32:17+00:00",
+        "effect": "MODIFIED_SERVICE",
+        "header": "Line 10, Possible deviations, 11:31 - 11:45",
+        "caught": false,
+        "lead_min": null
+      }
+    ]
+  }
+}

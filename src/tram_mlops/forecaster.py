@@ -27,7 +27,7 @@ from typing import Any
 
 import pandas as pd
 
-from tram_mlops import process, storage
+from tram_mlops import anomaly, gtfsrt, process, storage
 from tram_mlops.config import load_config, resolve_path
 from tram_mlops.features import add_features, future_delay
 from tram_mlops.train import load_latest, predict_from_features, segment_masks
@@ -58,6 +58,8 @@ class Forecaster:
     pending: dict[tuple[int, pd.Timestamp], dict[str, Any]] = field(default_factory=dict)
     _last_logged: dict[int, pd.Timestamp] = field(default_factory=dict)
     stats: dict[str, int] = field(default_factory=lambda: {"forecasts": 0, "scored": 0, "unmatched": 0, "expired": 0})
+    # Anomaly detection (roadmap E15) runs on the same recent data each cycle, when configured.
+    detector: Any = None
 
     def reload_model(self) -> None:
         pointer = self.models_dir / "latest.json"
@@ -95,6 +97,11 @@ class Forecaster:
         if feats.empty:
             return counts
         counts["scored"] = len(self._score(feats))
+        if self.detector is not None:
+            try:
+                counts["anomalies"] = self.detector.step(feats, now)["active"]
+            except Exception:  # anomaly detection must never stop the forecasts
+                log.exception("Anomaly detection failed")
         if self.model is not None:
             latest = feats.sort_values("timestamp").groupby("vehicle").tail(1)
             latest = latest[latest["timestamp"] >= now - pd.Timedelta(seconds=self.max_age_s)]
@@ -217,6 +224,8 @@ def from_config() -> tuple[Forecaster, float]:
         window_min=fc["window_min"],
         log_every_s=fc["log_every_s"],
         max_age_s=fc["max_age_s"],
+        detector=anomaly.Detector(resolve_path(paths["anomalies_dir"]),
+                                  resolve_path(paths["gtfsrt_dir"]) / gtfsrt.NETWORK, anomaly.Settings.from_config()),
     )
     return forecaster, fc["interval_s"]
 
