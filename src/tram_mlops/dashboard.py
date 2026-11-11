@@ -1,24 +1,27 @@
 """Streamlit dashboard: ``streamlit run src/tram_mlops/dashboard.py``.
 
 Live mode reads the newest raw records the ingester is writing and refreshes itself;
-History mode shows the processed dataset.
+History mode aggregates the processed partitions with DuckDB (see ``history``).
 """
 
 from __future__ import annotations
 
 import time
+from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-from tram_mlops import process
+from tram_mlops import process, storage
 from tram_mlops.config import load_config, resolve_path
+from tram_mlops.history import History, available_days
 from tram_mlops.train import load_latest, predict_delay
 
 cfg = load_config()
-PROCESSED = resolve_path(cfg["paths"]["processed_file"])
+PROCESSED_DIR = resolve_path(cfg["paths"]["processed_dir"])
 MODELS_DIR = resolve_path(cfg["paths"]["models_dir"])
 RAW_DIR = resolve_path(cfg["paths"]["raw_dir"])
 LIVE = cfg["dashboard"]
@@ -33,12 +36,44 @@ def _mtime(path: Path) -> float:
     return path.stat().st_mtime if path.exists() else 0.0
 
 
-# Cache keys include file mtimes so freshly processed data or a new model shows up immediately.
-@st.cache_data
-def load_positions(path: Path, mtime: float) -> pd.DataFrame:
-    if not path.exists():
-        return process.run(output=path) if LIVE["process_on_demand"] else pd.DataFrame()
-    return pd.read_parquet(path)
+def ensure_processed() -> list[date]:
+    """Days with processed data, building them from raw data (or the sample) if allowed and none exist."""
+    days = available_days(PROCESSED_DIR)
+    if not days and LIVE["process_on_demand"]:
+        _process_once()
+        days = available_days(PROCESSED_DIR)
+    return days
+
+
+@st.cache_resource
+def _process_once() -> None:
+    process.run()
+
+
+# Cache keys include the manifest's mtime, so a processing run shows up immediately.
+@st.cache_data(max_entries=32)
+def history_data(start: date, end: date, lines: tuple[str, ...], version: float) -> dict[str, Any]:
+    h = History(PROCESSED_DIR, start, end, list(lines), cfg["process"]["timezone"])
+    summary = h.summary()
+    if not summary["rows"]:
+        return {"summary": summary}
+    span = summary["to"] - summary["from"]
+    bucket_s = 300 if span <= pd.Timedelta(hours=6) else 3600
+    return {
+        "summary": summary,
+        "by_line": h.by_line(),
+        "bucket_s": bucket_s,
+        "over_time": h.over_time(bucket_s),
+        "by_hour": h.by_hour(),
+        "latest": h.latest_positions(),
+        "recent": h.recent(6),
+        "most_delayed": h.most_delayed(20),
+    }
+
+
+@st.cache_data(max_entries=4)
+def lines_seen(start: date, end: date, version: float) -> list[str]:
+    return History(PROCESSED_DIR, start, end).lines_seen()
 
 
 @st.cache_resource
@@ -178,16 +213,18 @@ def render_live(lines: list[str]) -> None:
     live_panel()
 
 
-def render_history(lines: list[str]) -> None:
-    df = load_positions(PROCESSED, _mtime(PROCESSED))
-    view = filter_lines(df, lines)
-    if view.empty:
+def render_history(lines: list[str], days: tuple[date, date] | None) -> None:
+    if days is None:
         st.warning("No processed data yet. Run `python -m tram_mlops.process`.")
         return
+    data = history_data(days[0], days[1], tuple(lines), _mtime(PROCESSED_DIR / storage.MANIFEST))
+    summary = data["summary"]
+    if not summary["rows"]:
+        st.warning("No observations for these days and lines.")
+        return
 
-    summary = process.summarize(view)
-    st.caption(f"{summary['rows']:,} observations · {summary['from'][:16]} → {summary['to'][:16]} "
-               "(Helsinki time)")
+    st.caption(f"{summary['rows']:,} observations · {summary['from']:%Y-%m-%d %H:%M} → "
+               f"{summary['to']:%Y-%m-%d %H:%M} (Helsinki time)")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Mean delay", f"{summary['mean_delay_s']:.0f} s", help="Positive = behind schedule")
     c2.metric("Median delay", f"{summary['median_delay_s']:.0f} s")
@@ -198,31 +235,51 @@ def render_history(lines: list[str]) -> None:
     left, right = st.columns(2)
     with left:
         st.subheader("Mean delay by line (s)")
-        st.bar_chart(view.groupby("line")["delay_s"].mean().round(), horizontal=True)
+        st.bar_chart(data["by_line"], horizontal=True)
     with right:
-        span = view["local_time"].max() - view["local_time"].min()
-        freq = "5min" if span <= pd.Timedelta(hours=6) else "1h"
         st.subheader("Mean delay over time (s)")
-        over_time = view.set_index("local_time")["delay_s"].resample(freq).mean().round()
-        over_time = over_time.tz_localize(None)  # plot in Helsinki wall-clock time
-        st.line_chart(over_time)
-        st.caption(f"Averaged over {freq} buckets, Helsinki time")
+        st.line_chart(data["over_time"])
+        st.caption(f"Averaged over {data['bucket_s'] // 60} min buckets, Helsinki time")
+
+    st.subheader("By hour of day")
+    by_hour = data["by_hour"]
+    h_left, h_right = st.columns(2)
+    with h_left:
+        st.caption("Mean delay (s)")
+        st.line_chart(by_hour.pivot(index="hour", columns="day_type", values="mean_delay_s").round())
+    with h_right:
+        st.caption(f"On time (%), between {-ON_TIME_MIN} s early and {ON_TIME_MAX} s late")
+        st.line_chart(by_hour.pivot(index="hour", columns="day_type", values="on_time_pct").round(1))
 
     st.subheader("Latest positions")
-    render_map(latest_per_tram(view), key="history_map")
+    render_map(data["latest"], key="history_map")
 
     st.subheader("Delay forecast")
-    render_forecast(view)
+    if data["recent"].empty:
+        st.info("No recent observations to forecast from.")
+    else:
+        render_forecast(data["recent"])
 
     st.subheader("Most delayed trams")
     st.dataframe(
-        view.groupby(["vehicle", "line"])["delay_s"].agg(["mean", "max", "count"]).round(0).astype(int)
-        .sort_values("mean", ascending=False).head(20).reset_index()
-        .rename(columns={"vehicle": "Tram", "line": "Line", "mean": "Mean delay (s)",
-                         "max": "Max delay (s)", "count": "Observations"}),
+        data["most_delayed"].rename(columns={"vehicle": "Tram", "line": "Line", "mean": "Mean delay (s)",
+                                             "max": "Max delay (s)", "count": "Observations"}),
         hide_index=True,
         width="stretch",
     )
+
+
+def pick_days(days: list[date]) -> tuple[date, date] | None:
+    """Sidebar control for the History view's UTC day range."""
+    if not days:
+        return None
+    default_start = max(days[0], days[-1] - timedelta(days=LIVE["history_days"] - 1))
+    picked = st.sidebar.date_input("Days", value=(default_start, days[-1]), min_value=days[0],
+                                   max_value=days[-1], help="Collection days (UTC)")
+    # While a range is being picked, Streamlit returns only its first day.
+    if isinstance(picked, tuple | list):
+        return (picked[0], picked[-1]) if picked else (default_start, days[-1])
+    return (picked, picked) if isinstance(picked, date) else (default_start, days[-1])
 
 
 st.set_page_config(page_title="Helsinki Tram Delays", page_icon="🚋", layout="wide")
@@ -232,9 +289,12 @@ raw_files = sorted(RAW_DIR.glob("tram_*.jsonl"))
 live_available = bool(raw_files) and time.time() - _mtime(raw_files[-1]) < LIVE["stale_after_s"]
 mode = st.sidebar.radio("View", ["Live", "History"], index=0 if live_available else 1,
                         help="Live reads the collector's newest data; History shows the processed dataset.")
+processed_days = ensure_processed() if mode == "History" else available_days(PROCESSED_DIR)
+day_range = pick_days(processed_days) if mode == "History" else None
 known_lines: set[str] = set()
-if PROCESSED.exists():
-    known_lines |= set(load_positions(PROCESSED, _mtime(PROCESSED))["line"].dropna())
+if processed_days:
+    known_lines |= set(lines_seen(processed_days[-1] - timedelta(days=LIVE["history_days"]), processed_days[-1],
+                                  _mtime(PROCESSED_DIR / storage.MANIFEST)))
 if live_available:
     known_lines |= set(load_live().get("line", pd.Series(dtype="string")).dropna())
 lines = st.sidebar.multiselect("Lines", sorted(known_lines, key=lambda s: (len(s), s)),
@@ -243,4 +303,4 @@ lines = st.sidebar.multiselect("Lines", sorted(known_lines, key=lambda s: (len(s
 if mode == "Live":
     render_live(lines)
 else:
-    render_history(lines)
+    render_history(lines, day_range)

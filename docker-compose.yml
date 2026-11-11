@@ -57,6 +57,20 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 
+  # Hourly from tram-process.timer (deploy/cpouta/): gzip raw days older than yesterday,
+  # then rebuild only the day partitions whose raw file changed. A full day peaks at ~0.8 GB.
+  process:
+    build: .
+    command: python -m tram_mlops.process --compact
+    profiles: ["jobs"]
+    logging: *logging
+    mem_limit: 1200m
+    # If memory runs short, this job is the one to go; the next run redoes its day.
+    oom_score_adj: 500
+    volumes:
+      - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw
+      - ${TRAM_DATA_DIR:-./data}/processed:/app/data/processed
+
   # One-off: docker compose run --rm pipeline
   pipeline:
     build: .

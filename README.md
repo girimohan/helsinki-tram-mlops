@@ -43,7 +43,7 @@ flowchart LR
     HSL[("HSL MQTT feed<br/>mqtt.hsl.fi")] -->|~1 msg/s per tram| I[ingest]
     I -->|1 per tram every 10 s| R[("data/raw/<br/>tram_YYYY-MM-DD.jsonl")]
     R --> P[process]
-    P --> D[("data/processed/<br/>tram_positions.parquet")]
+    P --> D[("data/processed/positions/<br/>date=YYYY-MM-DD/part.parquet")]
     D --> T[train]
     T --> M[("models/&lt;version&gt;/<br/>model.joblib + metrics.json")]
     R -->|newest records, every 15 s| L[Dashboard: Live]
@@ -55,9 +55,9 @@ flowchart LR
 | Stage | Command | What it does |
 |---|---|---|
 | **Ingest** | `python -m tram_mlops.ingest` | Subscribes to all tram positions, keeps one message per tram every 10 s, and appends to one JSONL file per day. Reconnects automatically if the connection drops. |
-| **Process** | `python -m tram_mlops.process` | Parses and deduplicates records, fixes the delay sign, removes stale journeys, converts times to Helsinki local time, and writes Parquet. |
-| **Train** | `python -m tram_mlops.train` | Builds features, splits by time, trains gradient boosting, compares it with the baseline, and saves a versioned model. |
-| **Dashboard** | `streamlit run src/tram_mlops/dashboard.py` | A **Live** view that reads the ingester's newest data directly, and a **History** view of the processed dataset. |
+| **Process** | `python -m tram_mlops.process` | Parses and deduplicates records, fixes the delay sign, removes stale journeys and converts times to Helsinki local time. Writes one Parquet partition per day with a fixed schema, and skips days that haven't changed since the last run (`--since`, `--rebuild` to reprocess). |
+| **Train** | `python -m tram_mlops.train` | Builds features from the most recent days, splits by time, trains gradient boosting, compares it with the baseline, and saves a versioned model. |
+| **Dashboard** | `streamlit run src/tram_mlops/dashboard.py` | A **Live** view that reads the ingester's newest data directly, and a **History** view that queries the day partitions with DuckDB, so it stays fast as weeks of data build up. |
 
 ## Quick start
 
@@ -98,7 +98,7 @@ To run the collector around the clock on a cloud VM, see [deploy/cpouta/](deploy
 
 **Live** view (screenshot at the top): trams in service, the share on time, a live map, a line-by-line status board and live forecasts. It refreshes every 15 seconds and warns if the collector stops sending data.
 
-**History** view: KPIs and trends across everything collected.
+**History** view: KPIs and trends for a chosen range of days, including delay and punctuality by hour of day for weekdays and weekends.
 
 ![History overview](docs/images/dashboard_overview.png)
 
@@ -158,13 +158,15 @@ Exploring the raw feed turned up several problems that silently distort results 
 helsinki-tram-mlops/
 ├── src/tram_mlops/
 │   ├── ingest.py        # MQTT collector → daily JSONL
-│   ├── process.py       # cleaning, deduplication, live tail reader
+│   ├── process.py       # cleaning, deduplication, incremental runs, live tail reader
+│   ├── storage.py       # day partitions, fixed schema, manifest, raw compaction
+│   ├── history.py       # DuckDB aggregates for the History view
 │   ├── features.py      # leakage-free features and 5-min-ahead target
 │   ├── train.py         # time split, model, baseline, versioning
 │   ├── dashboard.py     # Streamlit app (Live + History)
 │   └── config.py        # TOML config with env-var overrides
 ├── configs/config.toml  # every tunable setting
-├── tests/               # 31 pytest tests, including dashboard and end-to-end pipeline tests
+├── tests/               # 42 pytest tests, including dashboard and end-to-end pipeline tests
 ├── scripts/             # sample cutter, README figures and screenshots
 ├── data/sample/         # 45-min sample of real data (10 Nov 2026, 07:30–08:15)
 ├── docs/                # ROADMAP.md, README figures and screenshots
@@ -186,7 +188,7 @@ TRAM_INGEST_SAMPLE_INTERVAL_S=5 python -m tram_mlops.ingest
 
 ```bash
 pip install -r requirements-dev.txt   # pinned test, lint and type-check tools
-pytest --cov                          # 31 tests, about 15 s; fails below 80% coverage
+pytest --cov                          # 42 tests, about 15 s; fails below 80% coverage
 ruff check src tests scripts
 mypy
 pre-commit install                    # run ruff, mypy and file checks on every commit

@@ -1,0 +1,11 @@
+[Unit]
+Description=Update the processed tram data every hour
+
+[Timer]
+# Half past, so it doesn't start together with the hourly backup.
+OnCalendar=*:30
+RandomizedDelaySec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

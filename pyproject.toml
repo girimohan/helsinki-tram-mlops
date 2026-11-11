@@ -14,6 +14,9 @@ dependencies = [
     "scikit-learn>=1.6",
     "joblib>=1.3",
     "streamlit>=1.40",
+    "numpy>=2",
+    "pydeck>=0.9",
+    "duckdb>=1.4",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +50,7 @@ check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # No type information published for these.
-module = ["sklearn.*", "joblib.*", "pydeck.*"]
+module = ["sklearn.*", "joblib.*", "pydeck.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

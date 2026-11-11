@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from tram_mlops import storage
 from tram_mlops.config import PROJECT_ROOT, load_config, resolve_path
 from tram_mlops.features import FEATURES, TARGET, build_training_set
 from tram_mlops.train import load_latest, time_split
@@ -142,7 +143,7 @@ def model_evaluation(df: pd.DataFrame, model, metrics: dict, test_fraction: floa
 def main() -> None:
     cfg = load_config()
     OUT.mkdir(parents=True, exist_ok=True)
-    df = pd.read_parquet(resolve_path(cfg["paths"]["processed_file"]))
+    df = storage.read_positions(resolve_path(cfg["paths"]["processed_dir"]))
     delay_distribution(df, (cfg["process"]["on_time_min_s"], cfg["process"]["on_time_max_s"]))
     delay_by_line(df)
     loaded = load_latest(resolve_path(cfg["paths"]["models_dir"]))

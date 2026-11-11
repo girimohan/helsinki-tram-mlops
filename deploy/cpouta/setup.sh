@@ -133,6 +133,8 @@ install_timers() {
     systemctl daemon-reload
     systemctl enable --now tram-autodeploy.timer >/dev/null 2>&1
     log "Automatic deploys enabled (tram-autodeploy.timer, every 5 min)"
+    systemctl enable --now tram-process.timer >/dev/null 2>&1
+    log "Hourly processing enabled (tram-process.timer)"
     if [[ -f /etc/tram/rclone.conf && -f /etc/tram/backup.env ]]; then
         systemctl enable --now tram-backup.timer >/dev/null 2>&1
         log "Hourly backups to Allas enabled (tram-backup.timer)"

@@ -14,7 +14,7 @@ The goal is an end-to-end production MLOps system on a real-world streaming sour
 | Deliverable | Today | Delivered by |
 |---|---|---|
 | Live tram tracking | Done: live map and line status, refreshed every 15 s | E3 (always on, public) |
-| Historical analysis | History view over one in-memory table | E2 (weeks of data), E4 (quality reports) |
+| Historical analysis | History view over any range of days (DuckDB), by line and hour of day | E4 (quality reports) |
 | Delay prediction | Gradient boosting, 5 min ahead, against a persistence baseline | E5 (trustworthy evaluation), E13, E14 |
 | Anomaly detection | Not started | E15 |
 | Automated retraining | Manual `train` | E7, E8 |
@@ -33,7 +33,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | # | Enhancement | Effort | Needs | Status |
 |---|---|---|---|---|
 | 1 | [E1 Reproducible pipeline and CI](#e1-reproducible-pipeline-and-ci) | 1–1.5 d | none | **Done** 2026-11-10 |
-| 2 | [E2 Incremental, day-partitioned storage](#e2-incremental-day-partitioned-storage) | 3–4 d | none | Planned |
+| 2 | [E2 Incremental, day-partitioned storage](#e2-incremental-day-partitioned-storage) | 3–4 d | none | **Done** 2026-11-11 |
 | 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **Phases 1–2 done**: collecting since 2026-11-09, public HTTPS dashboard, deploy on green CI, hourly Allas backups ([setup guide](../deploy/cpouta/README.md)). Phase 3 (Terraform) planned |
 | 4 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
 | 5 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | Planned |
@@ -89,6 +89,21 @@ Items 1–7 (about 18 working days) complete the core loop. Item 8 completes the
 - **Midnight:** trips can cross UTC midnight, so features for day D also read the last 10 minutes of day D−1.
 
 **Changes.** New `storage.py`; `process.py` updated; `[paths] processed_dir`; `tests/test_storage.py`.
+
+**Done 2026-11-11.**
+- **Memory:** a full day (696k raw records) used to peak at 2.2 GB, more than the VM has. It now peaks at 0.8 GB:
+  - each 50k-record chunk is cleaned as it is read, and duplicates are removed once at the end
+  - text columns are Arrow strings
+  - the cleaned day takes 140 MB instead of 325 MB, with identical rows
+- **Disk:**
+  - a day's partition is 17 MB (zstd)
+  - gzipped raw days are 8× smaller (234 MB → 29 MB)
+  - compaction deletes the original only after checking the archive's size, and the content hash means a gzipped day isn't reprocessed
+- **Schema:** every partition is written with one fixed Arrow schema (`storage.POSITIONS_SCHEMA`), even on days with missing fields. This is a first data contract ahead of E4.
+- **Manifest:** records each day's rows and the rows dropped per rule, an early version of E4's drop counts.
+- **History view:** DuckDB queries take 0.01–0.13 s on a full day, and only aggregates reach the dashboard. New: a day-range picker, and delay and on-time share by hour of day, weekday vs weekend.
+- **Scheduling:** `tram-process.timer` runs the incremental job hourly on the VM, with its own memory cap. `train` reads the last `train_days` days.
+- **Midnight:** trips crossing UTC midnight are handled because `train` reads a continuous range of days. Per-day feature builds (E5) will need the D−1 tail.
 
 ## E3. Always-on host on CSC cPouta
 

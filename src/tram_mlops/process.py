@@ -1,7 +1,14 @@
-"""Turn raw HFP JSONL files into a clean, deduplicated Parquet table.
+"""Turn raw HFP JSONL files into clean, deduplicated, day-partitioned Parquet.
 
-Run with ``python -m tram_mlops.process [--input FILE_OR_DIR ...]``. Without
-``--input`` it reads ``paths.raw_dir`` and falls back to the bundled sample.
+Run with ``python -m tram_mlops.process``. It reads ``paths.raw_dir`` (falling back
+to the bundled sample) and writes one partition per UTC day under
+``paths.processed_dir`` (see ``storage``). Days whose raw file hasn't changed since
+the last run are skipped, so it is cheap to run every hour. Each day is parsed on its
+own, in chunks, so memory use is bounded by one day of cleaned data.
+
+    --since DATE   reprocess days from DATE on, changed or not (a backfill)
+    --rebuild      reprocess every day
+    --compact      first gzip raw days older than yesterday
 """
 
 from __future__ import annotations
@@ -10,12 +17,16 @@ import argparse
 import gzip
 import json
 import logging
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Iterator
+from datetime import UTC, date, datetime
+from itertools import islice
 from pathlib import Path
-from typing import IO
+from typing import IO, Any, Final
 
 import pandas as pd
 
+from tram_mlops import storage
 from tram_mlops.config import load_config, resolve_path
 
 log = logging.getLogger(__name__)
@@ -40,6 +51,11 @@ COLUMNS = {
     "loc": "location_source",
 }
 REQUIRED = ["veh", "tst", "dl"]
+# Raise when cleaning rules change, so the next run rebuilds every partition.
+PROCESSING_VERSION = 2
+# Arrow-backed strings take a fraction of the memory of Python string objects.
+STRING: Final = "string[pyarrow]"
+STRING_COLUMNS = ("line", "route", "direction", "operating_day", "start_time", "location_source")
 RAW_PATTERNS = ("*.jsonl", "*.jsonl.gz")
 
 
@@ -75,17 +91,27 @@ def _parse_lines(lines: Iterable[str | bytes]) -> tuple[list[dict], int]:
     return records, bad
 
 
-def load_raw(files: Iterable[Path]) -> pd.DataFrame:
-    """Read JSONL files into one DataFrame, skipping lines that aren't valid JSON objects."""
-    records, bad = [], 0
+def iter_raw_chunks(files: Iterable[Path], chunk_size: int = 50_000,
+                    counts: Counter[str] | None = None) -> Iterator[pd.DataFrame]:
+    """Raw records, at most ``chunk_size`` per DataFrame, skipping lines that aren't JSON objects."""
+    counts = Counter() if counts is None else counts
     for file in files:
         with _open_text(file) as f:
-            file_records, file_bad = _parse_lines(f)
-        records.extend(file_records)
-        bad += file_bad
-    if bad:
-        log.warning("Skipped %d malformed lines", bad)
-    return pd.DataFrame.from_records(records)
+            while lines := list(islice(f, chunk_size)):
+                records, bad = _parse_lines(lines)
+                counts["raw_rows"] += len(lines)
+                counts["malformed"] += bad
+                if records:
+                    yield pd.DataFrame.from_records(records)
+
+
+def load_raw(files: Iterable[Path]) -> pd.DataFrame:
+    """Read JSONL files into one DataFrame, skipping lines that aren't valid JSON objects."""
+    counts: Counter[str] = Counter()
+    chunks = list(iter_raw_chunks(files, counts=counts))
+    if counts["malformed"]:
+        log.warning("Skipped %d malformed lines", counts["malformed"])
+    return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
 
 
 def _tail_records(file: Path, cutoff: pd.Timestamp, chunk_size: int = 1 << 20) -> tuple[list[dict], bool]:
@@ -133,21 +159,63 @@ def load_recent(raw_dir: Path, window: pd.Timedelta, now: pd.Timestamp | None = 
     return raw[tst >= cutoff].reset_index(drop=True)
 
 
+def _clean_settings() -> dict[str, Any]:
+    proc = load_config()["process"]
+    return {
+        "tz": proc["timezone"],
+        "on_time_window": (proc["on_time_min_s"], proc["on_time_max_s"]),
+        "max_abs_delay_s": proc["max_abs_delay_s"],
+        "exclude_lines": proc.get("exclude_lines", ()),
+    }
+
+
 def clean_with_config(raw: pd.DataFrame) -> pd.DataFrame:
     """``clean`` with the settings from configs/config.toml."""
-    proc = load_config()["process"]
-    return clean(raw, proc["timezone"], (proc["on_time_min_s"], proc["on_time_max_s"]),
-                 proc["max_abs_delay_s"], proc.get("exclude_lines", ()))
+    return clean(raw, **_clean_settings())
 
 
 def clean(raw: pd.DataFrame, tz: str = "Europe/Helsinki",
           on_time_window: tuple[int, int] = (-60, 180), max_abs_delay_s: int = 1800,
-          exclude_lines: Iterable[str] = ()) -> pd.DataFrame:
+          exclude_lines: Iterable[str] = (), counts: Counter[str] | None = None) -> pd.DataFrame:
     """Normalise raw HFP records.
 
     ``delay_s`` is positive when a tram runs *behind* schedule. HFP's ``dl`` uses
-    the opposite sign (positive = ahead), so it is negated here.
+    the opposite sign (positive = ahead), so it is negated here. ``counts``, if given,
+    collects how many rows each rule dropped.
     """
+    return _finish(_normalise(raw, tz, on_time_window, max_abs_delay_s, exclude_lines, counts), counts)
+
+
+def clean_files(files: Iterable[Path], chunk_size: int = 50_000) -> tuple[pd.DataFrame, Counter[str]]:
+    """``clean_with_config`` over raw files, one chunk at a time, plus rows dropped per rule.
+
+    Only the cleaned, compact columns of each chunk are kept, so peak memory stays far
+    below loading every raw record at once.
+    """
+    settings = _clean_settings()
+    counts: Counter[str] = Counter()
+    parts = [_normalise(chunk, counts=counts, **settings)
+             for chunk in iter_raw_chunks(files, chunk_size, counts)]
+    parts = [p for p in parts if not p.empty]
+    combined = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+    return _finish(combined, counts), counts
+
+
+def _finish(df: pd.DataFrame, counts: Counter[str] | None = None) -> pd.DataFrame:
+    if df.empty:
+        return df
+    # The broker can deliver the same message more than once.
+    deduped = df.drop_duplicates(subset=["vehicle", "timestamp"])
+    if counts is not None:
+        counts["duplicate"] += len(df) - len(deduped)
+    return deduped.sort_values(["vehicle", "timestamp"]).reset_index(drop=True)
+
+
+def _normalise(raw: pd.DataFrame, tz: str = "Europe/Helsinki",
+               on_time_window: tuple[int, int] = (-60, 180), max_abs_delay_s: int = 1800,
+               exclude_lines: Iterable[str] = (), counts: Counter[str] | None = None) -> pd.DataFrame:
+    """Everything ``clean`` does except removing duplicates and sorting."""
+    counts = Counter() if counts is None else counts
     if raw.empty:
         return pd.DataFrame()
     missing = [c for c in REQUIRED if c not in raw.columns]
@@ -158,25 +226,26 @@ def clean(raw: pd.DataFrame, tz: str = "Europe/Helsinki",
     df["timestamp"] = pd.to_datetime(df["tst"], utc=True, errors="coerce", format="ISO8601")
     df["dl"] = pd.to_numeric(df["dl"], errors="coerce")
     df["veh"] = pd.to_numeric(df["veh"], errors="coerce")
+    before = len(df)
     df = df.dropna(subset=["timestamp", "dl", "veh"])
-    # The broker can deliver the same message more than once.
-    df = df.drop_duplicates(subset=["veh", "timestamp"])
+    counts["missing_required"] += before - len(df)
+    # Stale journey sign-ins: trams still signed into a journey that ended hours ago.
     implausible = df["dl"].abs() > max_abs_delay_s
-    if implausible.any():
-        log.info("Dropping %d rows with |delay| > %d s (stale journey sign-ins)",
-                 implausible.sum(), max_abs_delay_s)
-        df = df[~implausible]
+    counts["implausible_delay"] += int(implausible.sum())
+    df = df[~implausible]
     if exclude_lines and "desi" in df.columns:
-        df = df[~df["desi"].astype(str).isin(list(exclude_lines))]
+        excluded = df["desi"].astype(str).isin(list(exclude_lines))
+        counts["excluded_line"] += int(excluded.sum())
+        df = df[~excluded]
 
     out = df[[c for c in COLUMNS if c in df.columns]].rename(columns=COLUMNS)
     out["timestamp"] = df["timestamp"]
     out["delay_s"] = -df["dl"].astype(int)
     out["vehicle"] = out["vehicle"].astype(int)
 
-    for col in ("line", "route", "direction", "operating_day", "start_time"):
+    for col in STRING_COLUMNS:
         if col in out:
-            out[col] = out[col].astype("string")
+            out[col] = out[col].astype(STRING)
     for col in ("speed_mps", "heading", "lat", "lon", "odometer_m", "doors_open", "stop", "occupancy"):
         if col in out:
             out[col] = pd.to_numeric(out[col], errors="coerce")
@@ -211,40 +280,114 @@ def summarize(df: pd.DataFrame) -> dict:
     }
 
 
-def run(inputs: list[Path] | None = None, output: Path | None = None) -> pd.DataFrame:
+def _fingerprint(file: Path) -> dict[str, Any]:
+    stat = file.stat()
+    return {"source": file.name, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def _is_current(entry: dict[str, Any] | None, file: Path, root: Path, day: date) -> bool:
+    """Whether ``day``'s partition was already built from exactly this file's content."""
+    if not entry or entry.get("processing_version") != PROCESSING_VERSION:
+        return False
+    if not storage.partition_path(root, day).exists():
+        return False
+    fingerprint = _fingerprint(file)
+    if all(entry.get(k) == v for k, v in fingerprint.items()):
+        return True
+    # Name, size or mtime changed (e.g. the day was gzipped): compare the content itself.
+    if storage.file_sha256(file) == entry.get("sha256"):
+        entry.update(fingerprint)
+        return True
+    return False
+
+
+def _files_by_day(files: list[Path]) -> tuple[dict[date, Path], list[Path]]:
+    """Dated raw files keyed by day (preferring the uncompressed one), and undated files."""
+    dated: dict[date, Path] = {}
+    undated = []
+    for file in files:
+        day = storage.raw_day(file)
+        if day is None:
+            undated.append(file)
+        elif day not in dated or file.suffix != ".gz":
+            dated[day] = file
+    return dated, undated
+
+
+def _write_day(root: Path, day: date, df: pd.DataFrame, file: Path, counts: Counter[str],
+               manifest: dict[str, Any]) -> None:
+    storage.write_partition(root, day, df)
+    dropped = {k: v for k, v in sorted(counts.items()) if k != "raw_rows" and v}
+    manifest["partitions"][day.isoformat()] = {
+        **_fingerprint(file),
+        "sha256": storage.file_sha256(file),
+        "processing_version": PROCESSING_VERSION,
+        "processed_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "raw_rows": counts["raw_rows"],
+        "rows": len(df),
+        "dropped": dropped,
+    }
+    storage.save_manifest(root, manifest)  # after every day, so an interrupted run keeps its progress
+    log.info("%s: %d raw -> %d clean rows from %s (dropped: %s)",
+             day, counts["raw_rows"], len(df), file.name, dropped or "none")
+
+
+def run(inputs: list[Path] | None = None, since: date | None = None, rebuild: bool = False,
+        compact: bool = False, today: date | None = None) -> dict[str, list[str]]:
+    """Bring the processed partitions up to date; returns the days processed and skipped."""
     cfg = load_config()
     paths = cfg["paths"]
+    root = resolve_path(paths["processed_dir"])
+    raw_dir = resolve_path(paths["raw_dir"])
+    if compact and raw_dir.exists():
+        storage.compact_raw(raw_dir, today or datetime.now(UTC).date())
+
     if inputs:
         files = find_raw_files(inputs)
     else:
-        files = find_raw_files([resolve_path(paths["raw_dir"])])
+        files = find_raw_files([raw_dir])
         if not files:
             log.info("No collected data in %s; using the bundled sample", paths["raw_dir"])
             files = find_raw_files([resolve_path(paths["sample_file"])])
     if not files:
         raise FileNotFoundError("no raw JSONL files found")
 
-    log.info("Loading %d file(s)", len(files))
-    raw = load_raw(files)
-    df = clean_with_config(raw)
-    log.info("%d raw rows -> %d clean rows", len(raw), len(df))
+    manifest = storage.load_manifest(root)
+    result: dict[str, list[str]] = {"processed": [], "skipped": []}
+    dated, undated = _files_by_day(files)
+    for day, file in sorted(dated.items()):
+        forced = rebuild or (since is not None and day >= since)
+        if not forced and _is_current(manifest["partitions"].get(day.isoformat()), file, root, day):
+            result["skipped"].append(day.isoformat())
+            continue
+        df, counts = clean_files([file])
+        _write_day(root, day, df, file, counts, manifest)
+        result["processed"].append(day.isoformat())
 
-    output = output or resolve_path(paths["processed_file"])
-    output.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(output, index=False)
-    log.info("Wrote %s", output)
-    for key, value in summarize(df).items():
-        log.info("  %-15s %s", key, value)
-    return df
+    # Files without a date in their name (e.g. the bundled sample) are split by UTC day.
+    for file in undated:
+        df, counts = clean_files([file])
+        if df.empty:
+            continue
+        for day, part in df.groupby(df["timestamp"].dt.date):
+            _write_day(root, day, part.reset_index(drop=True), file, counts, manifest)
+            result["processed"].append(day.isoformat())
+
+    if result["skipped"]:
+        log.info("%d day(s) unchanged since the last run", len(result["skipped"]))
+    storage.save_manifest(root, manifest)
+    return result
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", type=Path, nargs="*", help="JSONL files or directories")
-    parser.add_argument("--output", type=Path, help="Parquet output path")
+    parser.add_argument("--since", type=date.fromisoformat, help="reprocess days from this date (YYYY-MM-DD)")
+    parser.add_argument("--rebuild", action="store_true", help="reprocess every day")
+    parser.add_argument("--compact", action="store_true", help="gzip raw days older than yesterday first")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    run(args.input, args.output)
+    run(args.input, since=args.since, rebuild=args.rebuild, compact=args.compact)
 
 
 if __name__ == "__main__":

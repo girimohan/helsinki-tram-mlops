@@ -1,11 +1,12 @@
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 import pytest
 from conftest import make_vp
 from streamlit.testing.v1 import AppTest
 
+from tram_mlops import storage
 from tram_mlops.config import PROJECT_ROOT, load_config
 from tram_mlops.process import clean
 from tram_mlops.train import save, train
@@ -16,7 +17,7 @@ DASHBOARD = str(PROJECT_ROOT / "src" / "tram_mlops" / "dashboard.py")
 @pytest.fixture
 def isolated_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("TRAM_PATHS_RAW_DIR", str(tmp_path / "raw"))
-    monkeypatch.setenv("TRAM_PATHS_PROCESSED_FILE", str(tmp_path / "positions.parquet"))
+    monkeypatch.setenv("TRAM_PATHS_PROCESSED_DIR", str(tmp_path / "processed"))
     monkeypatch.setenv("TRAM_PATHS_MODELS_DIR", str(tmp_path / "models"))
     load_config.cache_clear()
     yield tmp_path
@@ -26,7 +27,8 @@ def isolated_paths(tmp_path, monkeypatch):
 def test_dashboard_renders_from_sample_without_model(isolated_paths):
     app = AppTest.from_file(DASHBOARD, default_timeout=60).run()
     assert not app.exception
-    assert (isolated_paths / "positions.parquet").exists()
+    assert storage.list_partitions(isolated_paths / "processed") == [date(2026, 11, 10)]
+    assert app.sidebar.radio[0].value == "History"
     assert any("No trained model" in i.value for i in app.info)
 
 
@@ -35,13 +37,13 @@ def test_dashboard_never_processes_when_on_demand_is_off(isolated_paths, monkeyp
     load_config.cache_clear()
     app = AppTest.from_file(DASHBOARD, default_timeout=60).run()
     assert not app.exception
-    assert not (isolated_paths / "positions.parquet").exists()
+    assert not (isolated_paths / "processed").exists()
     assert any("No processed data" in w.value for w in app.warning)
 
 
 def test_dashboard_shows_forecasts_with_model(isolated_paths, synthetic_raw):
     df = clean(pd.DataFrame(synthetic_raw))
-    df.to_parquet(isolated_paths / "positions.parquet")
+    storage.write_partition(isolated_paths / "processed", df["timestamp"].dt.date.iloc[0], df)
     model, metrics = train(df, horizon_s=300, tolerance_s=30, min_rows=100)
     save(model, metrics, isolated_paths / "models")
 

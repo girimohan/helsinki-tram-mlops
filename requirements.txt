@@ -5,3 +5,5 @@ pyarrow==23.0.0
 scikit-learn==1.9.1
 joblib==1.6.0
 streamlit==1.54.0
+pydeck==0.9.1
+duckdb==1.5.6

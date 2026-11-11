@@ -12,7 +12,7 @@ from tram_mlops.config import load_config
 def isolated_paths(tmp_path, monkeypatch):
     # No collected data, so process falls back to the bundled sample.
     monkeypatch.setenv("TRAM_PATHS_RAW_DIR", str(tmp_path / "raw"))
-    monkeypatch.setenv("TRAM_PATHS_PROCESSED_FILE", str(tmp_path / "positions.parquet"))
+    monkeypatch.setenv("TRAM_PATHS_PROCESSED_DIR", str(tmp_path / "processed"))
     monkeypatch.setenv("TRAM_PATHS_MODELS_DIR", str(tmp_path / "models"))
     load_config.cache_clear()
     yield tmp_path

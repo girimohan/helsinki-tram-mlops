@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder
 
+from tram_mlops import storage
 from tram_mlops.config import load_config, resolve_path
 from tram_mlops.features import CATEGORICAL, FEATURES, TARGET, add_features, build_training_set
 
@@ -153,10 +154,14 @@ def predict_delay(model: Pipeline, df: pd.DataFrame) -> pd.Series:
 def run(horizon_s: float | None = None) -> dict:
     cfg = load_config()
     paths, model_cfg = cfg["paths"], cfg["model"]
-    processed = resolve_path(paths["processed_file"])
-    if not processed.exists():
-        raise FileNotFoundError(f"{processed} not found; run `python -m tram_mlops.process` first")
-    df = pd.read_parquet(processed)
+    root = resolve_path(paths["processed_dir"])
+    days = storage.list_partitions(root)
+    if not days:
+        raise FileNotFoundError(f"no processed data in {root}; run `python -m tram_mlops.process` first")
+    # Train on the most recent days only, so memory stays bounded as collection goes on.
+    start = days[-1] - timedelta(days=model_cfg["train_days"] - 1)
+    df = storage.read_positions(root, start, days[-1])
+    log.info("Training on %d rows from %s to %s", len(df), max(start, days[0]), days[-1])
 
     model, metrics = train(
         df,

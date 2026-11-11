@@ -135,8 +135,10 @@ Log out and back in once so that `docker` works without `sudo`.
 | Deploy history | `journalctl -u tram-autodeploy -n 30` |
 | Collector status | `docker compose ps` and `docker compose logs --tail 20 ingest` |
 | Disk space | `df -h /srv/tram` |
-| Copy data to the laptop | On the laptop: `scp "tram:/srv/tram/data/raw/tram_2026-11-*.jsonl" data/raw/` |
-| Process and train | On the laptop, from copied data. Not on this VM yet: `process` holds every raw record in memory, and one full day (about 500k records) needs about 1 GB. Roadmap item E2 fixes this. |
+| Copy data to the laptop | On the laptop: `scp "tram:/srv/tram/data/raw/tram_2026-11-*" data/raw/` (days older than yesterday are `.jsonl.gz`) |
+| Processing | Automatic: `tram-process.timer` runs `docker compose run --rm process` at half past every hour. It gzips raw days older than yesterday (about 8× smaller) and rebuilds only the day partitions whose raw file changed. Log: `journalctl -u tram-process -n 30` |
+| Reprocess days | `docker compose run --rm process python -m tram_mlops.process --since 2026-11-10` (or `--rebuild` for all) |
+| Train | On the laptop for now (`train_days` in the config bounds the memory). Scheduled retraining comes with roadmap item E7. |
 | Stop collecting | `docker compose stop ingest` |
 | Apply OS updates | Ubuntu installs security updates automatically. Run `sudo reboot` now and then for kernel updates; the services start again by themselves. |
 

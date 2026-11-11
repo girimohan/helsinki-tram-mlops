@@ -5,7 +5,7 @@
 [paths]
 raw_dir = "data/raw"
 sample_file = "data/sample/tram_sample.jsonl.gz"
-processed_file = "data/processed/tram_positions.parquet"
+processed_dir = "data/processed/positions"
 models_dir = "models"
 
 [ingest]
@@ -29,6 +29,8 @@ exclude_lines = ["000"]
 [model]
 # Predict a vehicle's delay this many seconds into the future.
 horizon_s = 300
+# Train on this many of the most recent collected days (UTC). A day is ~0.7 M rows.
+train_days = 7
 # A future observation must land within this many seconds of the horizon.
 horizon_tolerance_s = 60
 test_fraction = 0.25
@@ -43,6 +45,8 @@ refresh_s = 15
 in_service_s = 120
 # Warn that the ingester may have stopped when the newest record is older than this.
 stale_after_s = 120
+# History view: how many days it shows by default.
+history_days = 7
 # Build the processed dataset on first use if it is missing. Turn off on a public server
 # (TRAM_DASHBOARD_PROCESS_ON_DEMAND=false) so a page view can never start a full processing run.
 process_on_demand = true

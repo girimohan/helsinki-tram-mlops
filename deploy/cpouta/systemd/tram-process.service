@@ -1,0 +1,9 @@
+[Unit]
+Description=Compress finished raw days and update the processed day partitions
+After=docker.service
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@REPO_DIR@
+ExecStart=/usr/bin/docker compose run --rm process
