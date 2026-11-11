@@ -166,11 +166,15 @@ def test_punctuality_from_processed_history(data):
         t0 = datetime(day.year, day.month, day.day, 6, 0, tzinfo=UTC)
         raw = [make_vp(veh=v, t=t0 + timedelta(seconds=30 * i), dl=-60 * v, desi=str(v), oday=day.isoformat())
                for v in (1, 4) for i in range(100)]
+        raw += [make_vp(veh=7, t=t0, dl=-900, desi="4H", oday=day.isoformat())]
         storage.write_partition(data.processed_dir, day, process.clean(pd.DataFrame(raw)))
     by_line = call_tool(data, "punctuality", {"days": 7})
     # Line 4 runs 4 min late (not on time), line 1 runs 1 min late (on time).
     assert [(x["line"], x["on_time_pct"], x["mean_delay_min"]) for x in by_line["by_line"]] == [
         ("4", 0.0, 4.0), ("1", 100.0, 1.0)]
+    # A variant with a few very late runs is listed apart, not at the top of the ranking.
+    assert by_line["variants_left_out"]["lines"] == ["4H"]
+    assert [x["line"] for x in call_tool(data, "punctuality", {"line": "4h"})["by_line"]] == ["4H"]
     by_day = call_tool(data, "punctuality", {"line": "1", "group_by": "day"})
     assert [d["day"] for d in by_day["by_day"]] == ["Mon 2026-11-09", "Tue 2026-11-10"]
     assert call_tool(data, "punctuality", {"line": "4", "group_by": "hour"})["by_hour"][0]["hour"] == 8

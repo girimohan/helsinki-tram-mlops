@@ -50,7 +50,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | 14 | [E9 Inference API](#e9-inference-api) | 3–4 d | E6 | Planned |
 | 15 | [E13 Prediction intervals](#e13-prediction-intervals) | 3–4 d | E5, ~2 weeks of data | Planned |
 | 16 | [E14 Network-aware features](#e14-network-aware-features) | 1.5–2 wk | E5, ~3 weeks of data | Planned |
-| 17 | [E18 Chat assistant](#e18-chat-assistant) | 1.5 d | E6, E16 | **Built** 2026-11-11 on branch `chat-assistant`; live once an API key is set |
+| 17 | [E18 Chat assistant](#e18-chat-assistant) | 1.5 d | E6, E16 | **Done** 2026-11-11: Ask page, tested live against Groq |
 
 Items 1–8 complete the core loop. Item 4 comes early only because its data can't be backfilled. Item 9 completes the six deliverables. The rest adds depth.
 
@@ -460,8 +460,11 @@ def gtfs_trip_key(route, hfp_dir, oday, start, local_time):
 
 **Status.**
 - **Built:** `chat_tools.py`, `chat.py`, the Ask page, and 22 tests (tools against fixture feeds, the tool loop with a scripted client, the page through AppTest).
-- **Tested on real data:** the tools ran on a copy of the VM's data from 11 Nov.
-- **Not yet done:** a live run against Groq, which needs an API key (`GROQ_API_KEY` in `.env` on the VM).
+- **Tested live** on 11 Nov: the branch ran on the VM against Groq and the real data. Answers took 1–3 s with one tool call each.
+- **Fixed after the live run:**
+  - English questions got Finnish answers, because the tool results are in Finnish; the prompt now says to reply in the question's language.
+  - Signed delays ("–2 min") are now written in words ("2 min early").
+  - Rare lettered variants (3H, 46% on time on a handful of runs) topped the punctuality ranking even when listed apart. Now they are only named, unless asked for by line.
 
 **Next.**
 - Add HSL's Swedish stop names (`translations.txt`).

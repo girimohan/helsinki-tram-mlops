@@ -477,9 +477,18 @@ class TramData:
         else:
             df = h.by_line(self.on_time_window[1])
             rows = [{"line": str(r["line"]), "on_time_pct": round(float(r["on_time_pct"]), 1),
-                     "mean_delay_min": _minutes(r["mean_delay_s"]), "p90_delay_min": _minutes(r["p90_delay_s"])}
+                     "mean_delay_min": _minutes(r["mean_delay_s"]), "p90_delay_min": _minutes(r["p90_delay_s"]),
+                     "observations": int(r["rows"])}
                     for r in df.to_dict("records")]
-            out["by_line"] = sorted(rows, key=lambda x: x["on_time_pct"])
+            # Lettered lines (3H, 7B, 1T) are short or occasional variants with few trips. Ranked with
+            # the main lines they top every list on a handful of runs, and the model ranks them even
+            # when they are listed apart, so they are named only (ask for one with ``line``).
+            shown = [r for r in rows if wanted or r["line"].isdigit()]
+            out["by_line"] = sorted(shown, key=lambda x: x["on_time_pct"])
+            variants = sorted((r["line"] for r in rows if r not in shown), key=alerts.line_sort_key)
+            if variants:
+                out["variants_left_out"] = {"lines": variants, "why": "short or occasional variants of a main "
+                                            "line with few trips; ask for one by its line to see it"}
         return out
 
     def forecast_accuracy(self) -> dict[str, Any]:
