@@ -142,3 +142,12 @@ def test_chunked_cleaning_matches_cleaning_everything_at_once(synthetic_raw, tmp
     whole = process.clean_with_config(process.load_raw([path]))
     pd.testing.assert_frame_equal(chunked, whole)
     assert counts["duplicate"] == 500 and counts["raw_rows"] == len(synthetic_raw) + 500
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+def test_written_files_are_readable_by_others(paths):
+    raw, root = paths
+    _write_raw(raw / f"tram_{D1}.jsonl", _day_records(D1))
+    process.run()
+    for path in (storage.partition_path(root, D1), root / storage.MANIFEST):
+        assert path.stat().st_mode & 0o777 == storage.FILE_MODE

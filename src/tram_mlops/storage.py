@@ -36,6 +36,8 @@ PARTITION_FILE = "part.parquet"
 MANIFEST = "_manifest.json"
 RAW_NAME = re.compile(r"tram_(\d{4}-\d{2}-\d{2})\.jsonl(\.gz)?$")
 TZ = "Europe/Helsinki"
+# Temporary files are created owner-only; finished files get normal read permissions.
+FILE_MODE = 0o644
 
 # The processed table's contract: column order and types are fixed for every partition.
 POSITIONS_SCHEMA = pa.schema([
@@ -106,6 +108,7 @@ def compact_raw(raw_dir: Path, today: date, keep_days: int = 2) -> list[Path]:
                         gzip.GzipFile(filename=src.name, mode="wb", fileobj=raw_out, mtime=0) as out, \
                         open(src, "rb") as f:
                     shutil.copyfileobj(f, out, 1 << 20)
+                shutil.copymode(src, tmp)
                 os.replace(tmp, dest)
             finally:
                 tmp.unlink(missing_ok=True)
@@ -160,6 +163,7 @@ def write_partition(root: Path, day: date, df: pd.DataFrame) -> Path:
     tmp = Path(tmp_name)
     try:
         pq.write_table(to_table(df), tmp, compression="zstd")
+        tmp.chmod(FILE_MODE)
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
@@ -204,4 +208,5 @@ def save_manifest(root: Path, manifest: dict[str, Any]) -> None:
     fd, tmp_name = tempfile.mkstemp(dir=root, prefix=".manifest-", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
+    os.chmod(tmp_name, FILE_MODE)
     os.replace(tmp_name, root / MANIFEST)
