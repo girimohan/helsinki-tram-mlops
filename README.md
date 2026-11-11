@@ -54,7 +54,8 @@ flowchart LR
 
 | Stage | Command | What it does |
 |---|---|---|
-| **Ingest** | `python -m tram_mlops.ingest` | Subscribes to all tram positions, keeps one message per tram every 10 s, and appends to one JSONL file per day. Reconnects automatically if the connection drops. |
+| **Ingest** | `python -m tram_mlops.ingest` | Subscribes to all tram positions over TLS, keeps one per tram every 10 s, and appends to one JSONL file per day. Also keeps every stop and journey event (arrivals, departures, journey sign-in and sign-off, traffic-light priority) in a separate daily file. Reconnects automatically if the connection drops. |
+| **Archive GTFS-RT** | `python -m tram_mlops.gtfsrt` | Records HSL's service alerts and the tram part of its trip updates (HSL's own arrival predictions), keeping only what changed. Nobody else archives these feeds. |
 | **Process** | `python -m tram_mlops.process` | Parses and deduplicates records, fixes the delay sign, removes stale journeys and converts times to Helsinki local time. Writes one Parquet partition per day with a fixed schema, and skips days that haven't changed since the last run (`--since`, `--rebuild` to reprocess). |
 | **Train** | `python -m tram_mlops.train` | Builds features from the most recent days, splits by time, trains gradient boosting, compares it with the baseline, and saves a versioned model. |
 | **Dashboard** | `streamlit run src/tram_mlops/dashboard.py` | A **Live** view that reads the ingester's newest data directly, and a **History** view that queries the day partitions with DuckDB, so it stays fast as weeks of data build up. |
@@ -157,7 +158,8 @@ Exploring the raw feed turned up several problems that silently distort results 
 ```
 helsinki-tram-mlops/
 ├── src/tram_mlops/
-│   ├── ingest.py        # MQTT collector → daily JSONL
+│   ├── ingest.py        # MQTT collector: positions + stop events → daily JSONL
+│   ├── gtfsrt.py        # archiver for HSL service alerts and tram trip updates
 │   ├── process.py       # cleaning, deduplication, incremental runs, live tail reader
 │   ├── storage.py       # day partitions, fixed schema, manifest, raw compaction
 │   ├── history.py       # DuckDB aggregates for the History view
@@ -166,7 +168,7 @@ helsinki-tram-mlops/
 │   ├── dashboard.py     # Streamlit app (Live + History)
 │   └── config.py        # TOML config with env-var overrides
 ├── configs/config.toml  # every tunable setting
-├── tests/               # 42 pytest tests, including dashboard and end-to-end pipeline tests
+├── tests/               # 59 pytest tests, including dashboard and end-to-end pipeline tests
 ├── scripts/             # sample cutter, README figures and screenshots
 ├── data/sample/         # 45-min sample of real data (10 Nov 2026, 07:30–08:15)
 ├── docs/                # ROADMAP.md, README figures and screenshots
@@ -188,7 +190,7 @@ TRAM_INGEST_SAMPLE_INTERVAL_S=5 python -m tram_mlops.ingest
 
 ```bash
 pip install -r requirements-dev.txt   # pinned test, lint and type-check tools
-pytest --cov                          # 42 tests, about 15 s; fails below 80% coverage
+pytest --cov                          # 59 tests, about 15 s; fails below 80% coverage
 ruff check src tests scripts
 mypy
 pre-commit install                    # run ruff, mypy and file checks on every commit

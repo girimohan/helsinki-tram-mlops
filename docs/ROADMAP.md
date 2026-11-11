@@ -35,7 +35,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | 1 | [E1 Reproducible pipeline and CI](#e1-reproducible-pipeline-and-ci) | 1–1.5 d | none | **Done** 2026-11-10 |
 | 2 | [E2 Incremental, day-partitioned storage](#e2-incremental-day-partitioned-storage) | 3–4 d | none | **Done** 2026-11-11 |
 | 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **Phases 1–2 done**: collecting since 2026-11-09, public HTTPS dashboard, deploy on green CI, hourly Allas backups ([setup guide](../deploy/cpouta/README.md)). Phase 3 (Terraform) planned |
-| 4 | [E16 HSL realtime feeds](#e16-hsl-realtime-feeds-alerts-trip-updates-and-stop-events) | 1–1.5 d to start archiving; about 9 d in all | E3 | Planned: phase 0 next, because no public archive exists |
+| 4 | [E16 HSL realtime feeds](#e16-hsl-realtime-feeds-alerts-trip-updates-and-stop-events) | 1–1.5 d to start archiving; about 9 d in all | E3 | **Phase 0 done** 2026-11-11: archiving alerts, tram trip updates and stop events |
 | 5 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
 | 6 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | Planned |
 | 7 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | Planned |
@@ -314,7 +314,7 @@ Measured on 11 Nov 2026, 09:11–09:30 Helsinki time (morning peak).
 |---|---|---|---|---|
 | [Trip updates](https://realtime.hsl.fi/realtime/trip-updates/v2/hsl) | 1.22 MB, never gzipped, always changed | ~234 of 1312 trips | every 15 s | **Collect**, tram trips only, changed trips only: ~18 MB/day as Parquet |
 | [Service alerts](https://realtime.hsl.fi/realtime/service-alerts/v2/hsl) | 27 kB; ETag returns 304 when unchanged | 3 of 23 alerts | every 5 min, and on new alerts | **Collect**, versioned, < 1 MB/day |
-| HFP stop events (`ars`, `arr`, `dep`, `pde`, `pas`, `vja`, `vjout`, `tlr`, `tla`) | same MQTT connection as today | not yet measured | per event | **Collect** raw; measure the volume with a 1-hour probe first |
+| HFP stop events (`ars`, `arr`, `dep`, `pde`, `pas`, `vja`, `vjout`, `tlr`, `tla`) | same MQTT connection as today | ~530 events/min at peak (2.2 MB per 10 min); traffic-light priority is 59% of the bytes | per event | **Collect** raw: ~250 MB/day, ~30 MB/day after compaction. Stop events carry the scheduled time (`ttarr`/`ttdep`); `tlr` carries the junction id (`sid`) |
 | [Static GTFS](https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip) | 88 MB | 33 tram routes | regenerated daily | **Collect** once a day, as a tram subset |
 | [GTFS-RT vehicle positions](https://realtime.hsl.fi/realtime/vehicle-positions/v2/hsl) | 130 kB | ~117 trams | every 1 s | **Skip.** It is built from HFP, so it adds only the next-stop id (100% vs 39% in HFP) and occupancy (37%). Use it only as a Live-view fallback |
 | Digitransit Routing API (GraphQL) | — | — | — | **Skip.** It needs a subscription key and repeats what the feeds above provide. Keep it for debugging |
@@ -378,6 +378,21 @@ def gtfs_trip_key(route, hfp_dir, oday, start, local_time):
 | 5. HSL as an external baseline | "Does the model beat HSL?" | As-of join; HSL's predicted delay at t + 5 min, interpolated between stops; scored with persistence and our model on rows where all three exist; HSL's coverage reported separately; added to the backtest, the Model health tab and the E7 gate | 1.5–2 d | 1; E5, E6; ~1 week of trip updates |
 | 6. Features and labels | Use the new data in the models | E14: segment times, stop headways, HSL's predicted delay, an "alert active on this line" flag, all as-of. E15: reactive alerts, cancellations and skipped stops as weak labels | +1 d each on E14 and E15 | 2, 3, 5; 2–3 weeks of data |
 | 7. Traffic-light priority (optional) | Signal-priority denial rate per junction and hour | DuckDB aggregate and dashboard panel, if trams do send `tlr`/`tla` | 0.5–1 d | 2 |
+
+**Phase 0 done 2026-11-11.**
+- **New `gtfsrt` service:**
+  - polls alerts every 60 s (with ETag) and trip updates every 30 s
+  - keeps tram trips only (33 routes from static GTFS, refreshed daily, plus lettered variants such as `1013E`)
+  - writes a line only when a trip changes, and saves the alert list only when its content changes
+  - stores one gzip member per poll in `data/raw/gtfsrt/`
+  - a live 150-s run averaged ~15 kB per poll, about 40 MB/day
+- **Collector:**
+  - stop and journey events go to `events_YYYY-MM-DD.jsonl`, unsampled
+  - TLS on port 8883
+  - downsampling keyed on (operator, vehicle)
+- **Backups and compaction:** the backup now snapshots every file still being written today, and compaction also gzips old event files.
+- **Disk:** about 120 MB/day in all, so the 25 GB volume lasts about 6 months. Phase 2, which turns events into Parquet, is the place to cut that.
+- **Dependency pin:** `gtfs-realtime-bindings` is held at 2.x because 3.x needs protobuf 7, which Streamlit 1.54 doesn't allow.
 
 **Licence.** Digitransit data is CC BY 4.0. The attribution must name Digitransit and give the time the data was received ([terms](https://digitransit.fi/en/developers/apis/7-terms-of-use/)).
 

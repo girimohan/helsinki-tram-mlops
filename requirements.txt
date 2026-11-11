@@ -7,3 +7,6 @@ joblib==1.6.0
 streamlit==1.54.0
 pydeck==0.9.1
 duckdb==1.5.6
+# 2.x: 3.x needs protobuf 7, which Streamlit 1.54 doesn't allow
+gtfs-realtime-bindings==2.2.0
+protobuf==6.33.6

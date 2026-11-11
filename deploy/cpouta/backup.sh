@@ -17,18 +17,16 @@ mountpoint -q "$DATA_ROOT" || { echo "$DATA_ROOT is not mounted; nothing to back
 
 rc() { rclone --config "$CONF" --stats-one-line --stats-log-level NOTICE --stats 1h "$@"; }
 
-# Finished days and models are copied as they are.
-today="tram_$(date -u +%F).jsonl"
-rc copy "$DATA_ROOT/data/raw" "allas:$ALLAS_BUCKET/data/raw" --exclude "$today"
+# Finished days and models are copied as they are. Raw files are named by UTC day
+# (tram_, events_, gtfsrt/trip_updates_, gtfsrt/alerts_), so today's are the ones still growing.
+today="$(date -u +%F)"
+rc copy "$DATA_ROOT/data/raw" "allas:$ALLAS_BUCKET/data/raw" --exclude "*${today}*"
 rc copy "$DATA_ROOT/models" "allas:$ALLAS_BUCKET/models"
 
-# The collector keeps appending to today's file, and rclone refuses to upload a file
-# that changes mid-transfer, so upload a snapshot. A partial last line is harmless:
-# processing skips malformed lines.
-if [[ -f "$DATA_ROOT/data/raw/$today" ]]; then
-    snapshot="$(mktemp -d)"
-    trap 'rm -rf "$snapshot"' EXIT
-    cp "$DATA_ROOT/data/raw/$today" "$snapshot/$today"
-    rc copyto "$snapshot/$today" "allas:$ALLAS_BUCKET/data/raw/$today"
-fi
+# rclone refuses to upload a file that changes mid-transfer, so upload snapshots of
+# today's files. A partial last line (or gzip member) is harmless: readers skip it.
+snapshot="$(mktemp -d)"
+trap 'rm -rf "$snapshot"' EXIT
+(cd "$DATA_ROOT/data/raw" && find . -type f -name "*${today}*" -exec cp --parents {} "$snapshot/" \;)
+rc copy "$snapshot" "allas:$ALLAS_BUCKET/data/raw"
 echo "Backed up $DATA_ROOT/data/raw and $DATA_ROOT/models to allas:$ALLAS_BUCKET"

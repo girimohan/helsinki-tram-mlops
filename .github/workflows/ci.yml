@@ -51,3 +51,5 @@ jobs:
       - run: docker build -t tram-mlops:ci .
       # The image the server runs must be able to process the sample as its non-root user.
       - run: docker run --rm tram-mlops:ci python -m tram_mlops.process
+      # The collector connects to HSL over TLS, which needs the image's CA certificates.
+      - run: docker run --rm tram-mlops:ci python -c "import ssl; assert ssl.create_default_context().cert_store_stats()['x509_ca'] > 0"

@@ -6,15 +6,34 @@
 raw_dir = "data/raw"
 sample_file = "data/sample/tram_sample.jsonl.gz"
 processed_dir = "data/processed/positions"
+gtfsrt_dir = "data/raw/gtfsrt"
 models_dir = "models"
 
 [ingest]
 host = "mqtt.hsl.fi"
-port = 1883
+# TLS on 8883, as HSL recommends (1883 is the unencrypted port).
+port = 8883
+tls = true
 topic = "/hfp/v2/journey/ongoing/vp/tram/#"
+# Stop and journey events, kept in full (not downsampled) in events_YYYY-MM-DD.jsonl:
+# arrive at / arrive stopped / depart from / ready to depart / pass a stop, journey sign-in
+# and sign-off, and traffic-light priority request / response.
+events = ["arr", "ars", "dep", "pde", "pas", "vja", "vjout", "tlr", "tla"]
 # HSL publishes each vehicle at ~1 Hz. Keep at most one message per vehicle
 # per interval so a day of collection stays a manageable size.
 sample_interval_s = 10
+
+[gtfsrt]
+# HSL's GTFS-RT feeds (https://hsldevcom.github.io/gtfs_rt/), archived by `python -m tram_mlops.gtfsrt`.
+trip_updates_url = "https://realtime.hsl.fi/realtime/trip-updates/v2/hsl"
+alerts_url = "https://realtime.hsl.fi/realtime/service-alerts/v2/hsl"
+# Trip updates refresh every 15 s, but a trip's prediction changes only at stop events.
+trip_updates_interval_s = 30
+alerts_interval_s = 60
+static_gtfs_url = "https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip"
+static_refresh_h = 24
+# GTFS route types counted as trams: 0 = tram, 900 = light rail (line 15, route 2015).
+tram_route_types = ["0", "900"]
 
 [process]
 timezone = "Europe/Helsinki"

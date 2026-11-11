@@ -34,7 +34,9 @@ log = logging.getLogger(__name__)
 
 PARTITION_FILE = "part.parquet"
 MANIFEST = "_manifest.json"
-RAW_NAME = re.compile(r"tram_(\d{4}-\d{2}-\d{2})\.jsonl(\.gz)?$")
+RAW_NAME = re.compile(r"(?:tram|events)_(\d{4}-\d{2}-\d{2})\.jsonl(\.gz)?$")
+# Daily raw files the collector writes as plain JSONL (positions and stop events).
+RAW_PREFIXES = ("tram", "events")
 TZ = "Europe/Helsinki"
 # Temporary files are created owner-only; finished files get normal read permissions.
 FILE_MODE = 0o644
@@ -72,7 +74,7 @@ COLUMNS = POSITIONS_SCHEMA.names
 # --- raw files -------------------------------------------------------------------------
 
 def raw_day(path: Path) -> date | None:
-    """The UTC collection day in a raw file's name (``tram_YYYY-MM-DD.jsonl[.gz]``)."""
+    """The UTC collection day in a raw file's name (``tram_`` or ``events_YYYY-MM-DD.jsonl[.gz]``)."""
     match = RAW_NAME.search(path.name)
     return date.fromisoformat(match.group(1)) if match else None
 
@@ -94,7 +96,7 @@ def compact_raw(raw_dir: Path, today: date, keep_days: int = 2) -> list[Path]:
     the newest two, so the default keeps today and yesterday as they are.
     """
     compacted = []
-    for src in sorted(raw_dir.glob("tram_*.jsonl")):
+    for src in sorted(f for prefix in RAW_PREFIXES for f in raw_dir.glob(f"{prefix}_*.jsonl")):
         day = raw_day(src)
         if day is None or (today - day).days < keep_days:
             continue

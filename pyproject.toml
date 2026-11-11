@@ -17,6 +17,8 @@ dependencies = [
     "numpy>=2",
     "pydeck>=0.9",
     "duckdb>=1.4",
+    "gtfs-realtime-bindings>=2",
+    "protobuf>=5",
 ]
 
 [project.optional-dependencies]
@@ -50,7 +52,7 @@ check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # No type information published for these.
-module = ["sklearn.*", "joblib.*", "pydeck.*", "pyarrow.*"]
+module = ["sklearn.*", "joblib.*", "pydeck.*", "pyarrow.*", "google.transit.*", "google.protobuf.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

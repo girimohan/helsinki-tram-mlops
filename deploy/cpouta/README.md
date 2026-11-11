@@ -133,7 +133,7 @@ Log out and back in once so that `docker` works without `sudo`.
 |---|---|
 | Deploy new code | Automatic: push to `main`, and the VM deploys once CI passes (see below). Re-run `sudo bash deploy/cpouta/setup.sh` after changing anything in `deploy/`. |
 | Deploy history | `journalctl -u tram-autodeploy -n 30` |
-| Collector status | `docker compose ps` and `docker compose logs --tail 20 ingest` |
+| Collector status | `docker compose ps` and `docker compose logs --tail 20 ingest` (positions and stop events) or `gtfsrt` (alerts and trip updates) |
 | Disk space | `df -h /srv/tram` |
 | Copy data to the laptop | On the laptop: `scp "tram:/srv/tram/data/raw/tram_2026-11-*" data/raw/` (days older than yesterday are `.jsonl.gz`) |
 | Processing | Automatic: `tram-process.timer` runs `docker compose run --rm process` at half past every hour. It gzips raw days older than yesterday (about 8× smaller) and rebuilds only the day partitions whose raw file changed. Log: `journalctl -u tram-process -n 30` |

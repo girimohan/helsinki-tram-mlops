@@ -56,7 +56,8 @@ PROCESSING_VERSION = 2
 # Arrow-backed strings take a fraction of the memory of Python string objects.
 STRING: Final = "string[pyarrow]"
 STRING_COLUMNS = ("line", "route", "direction", "operating_day", "start_time", "location_source")
-RAW_PATTERNS = ("*.jsonl", "*.jsonl.gz")
+# Vehicle positions; the collector's other files (events_*, gtfsrt/) are processed elsewhere.
+RAW_PATTERNS = ("tram_*.jsonl", "tram_*.jsonl.gz")
 
 
 def find_raw_files(inputs: Iterable[Path]) -> list[Path]:

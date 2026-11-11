@@ -25,6 +25,16 @@ services:
     volumes:
       - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw
 
+  # Archives HSL's GTFS-RT service alerts and tram trip updates (roadmap E16).
+  gtfsrt:
+    build: .
+    command: python -m tram_mlops.gtfsrt
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+    volumes:
+      - ${TRAM_DATA_DIR:-./data}/raw:/app/data/raw
+
   dashboard:
     build: .
     restart: unless-stopped
