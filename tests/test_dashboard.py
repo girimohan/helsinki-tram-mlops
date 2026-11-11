@@ -22,6 +22,7 @@ def isolated_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("TRAM_PATHS_GTFSRT_DIR", str(tmp_path / "raw" / "gtfsrt"))
     monkeypatch.setenv("TRAM_PATHS_PROCESSED_DIR", str(tmp_path / "processed"))
     monkeypatch.setenv("TRAM_PATHS_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("TRAM_PATHS_PREDICTIONS_DIR", str(tmp_path / "predictions"))
     load_config.cache_clear()
     yield tmp_path
     load_config.cache_clear()
@@ -196,3 +197,49 @@ def test_history_stops_tab_uses_stop_events(isolated_paths):
     show_section(app, "Stops")
     metrics = {m.label: m.value for m in app.metric}
     assert metrics["Arrivals"] == "18" and metrics["Stops"] == "3"
+
+
+def write_scored(predictions_dir, now, n=120):
+    """Scored forecasts for lines 1-3 over the last hour: the model is off by 20 s, persistence by 50 s."""
+    records = []
+    for i in range(n):
+        observed = now - timedelta(minutes=55) + timedelta(seconds=25 * i)
+        records.append({"vehicle": i % 6, "line": str(i % 3 + 1), "direction": "1",
+                        "observed_at": observed.isoformat(), "issued_at": observed.isoformat(),
+                        "scored_at": (observed + timedelta(minutes=6)).isoformat(),
+                        "horizon_s": 300, "delay_now": 100, "predicted": 130.0, "actual": 150,
+                        "segment": "en_route" if i % 4 else "before_departure", "model_version": "v1"})
+    storage.append_gzip_jsonl(predictions_dir / f"forecasts_{now:%Y-%m-%d}.jsonl.gz", records)
+
+
+def test_model_health_page_reports_live_accuracy(isolated_paths):
+    now = datetime.now(UTC)
+    write_scored(isolated_paths / "predictions", now)
+    app = open_page(AppTest.from_file(DASHBOARD, default_timeout=60).run(), "model-health")
+    assert not app.exception
+    metrics = {m.label: m.value for m in app.metric}
+    assert metrics["En-route error, last hour"] == "20.0 s"
+    assert metrics["Persistence, same forecasts"] == "50.0 s"
+    assert metrics["Forecasts scored"] == "120"
+    assert any("By line" in h.value for h in app.subheader)
+
+
+def test_model_health_page_without_forecasts_explains_itself(isolated_paths):
+    app = open_page(AppTest.from_file(DASHBOARD, default_timeout=60).run(), "model-health")
+    assert not app.exception
+    assert any("No scored forecasts yet" in i.value for i in app.info)
+
+
+def test_live_page_shows_the_forecaster_output_when_fresh(isolated_paths):
+    now = datetime.now(UTC)
+    write_live_raw(isolated_paths / "raw", now)
+    write_scored(isolated_paths / "predictions", now)
+    snapshot = {"issued_at": now.isoformat(), "model_version": "v1", "horizon_s": 300, "forecasts": [
+        {"vehicle": v, "line": str(v), "direction": "1", "observed_at": now.isoformat(), "delay_now": 50 * v,
+         "predicted": 50.0 * v + 10, "segment": "en_route"} for v in range(1, 6)]}
+    (isolated_paths / "predictions" / "latest.json").write_text(json.dumps(snapshot))
+
+    app = AppTest.from_file(DASHBOARD, default_timeout=60).run()
+    assert not app.exception
+    assert {m.label: m.value for m in app.metric}["Live error, last hour (5 min ahead)"] == "20 s"
+    assert any("forecaster service" in c.value for c in app.caption)

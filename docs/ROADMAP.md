@@ -37,7 +37,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **Phases 1–2 done**: collecting since 2026-11-09, public HTTPS dashboard, deploy on green CI, hourly Allas backups ([setup guide](../deploy/cpouta/README.md)). Phase 3 (Terraform) planned |
 | 4 | [E16 HSL realtime feeds](#e16-hsl-realtime-feeds-alerts-trip-updates-and-stop-events) | 1–1.5 d to start archiving; about 9 d in all | E3 | **Phase 0 done** 2026-11-11: archiving alerts, tram trip updates and stop events |
 | 5 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
-| 6 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | **Backend done** 2026-11-11: forecaster service and live metrics; Model health tab next |
+| 6 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | **Done** 2026-11-11: forecaster service, live metrics, Model health page |
 | 7 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | Planned |
 | 8 | [E7 Promotion gate and scheduled retraining](#e7-promotion-gate-and-scheduled-retraining) | 3 d | E2, E5 | Planned |
 | 9 | [E15 Anomaly detection](#e15-anomaly-detection) | 3–4 d | E2, E6, E16, ~2 weeks of data | Planned |
@@ -181,6 +181,9 @@ Items 1–8 complete the core loop. Item 4 comes early only because its data can
 - **Model:** retrained on 9–11 Nov (614k training rows). On the last 12 hours: en-route MAE 36.3 s vs 43.9 s for persistence (−17%); overall 34.2 s vs 64.7 s. This is still one split, which E5 replaces with backtests.
   - Training peaked at 1.2 GB, too much for the VM, so it ran on a laptop. E7 must bound training memory, for example by sampling days or keeping fewer columns.
 - **Deploy fix:** all compose services now share one image. Timer-started jobs had been running stale code.
+- **Dashboard:**
+  - a Model health page: last hour and 24 h KPIs, error over time for the model vs persistence, error per line, and live vs offline test error
+  - Live shows the forecaster's output when it is fresh, with its live error, and falls back to forecasting in the dashboard otherwise
 
 ## E7. Promotion gate and scheduled retraining
 

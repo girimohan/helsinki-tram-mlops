@@ -6,11 +6,12 @@ one runs):
 - **Live** reads the newest raw records the collector is writing and refreshes itself,
   with HSL's service alerts and cancellations for each line.
 - **History** aggregates the processed partitions with DuckDB (see ``history``).
+- **Model health** shows live accuracy: every forecast the forecaster logs is scored
+  against what happened 5 minutes later, next to persistence (see ``monitoring``).
 - **System** shows how fresh and complete every data source is, what each processing
   run kept and dropped, and which model is deployed (see ``status``).
 
-To add a page (e.g. E6's Model health), write a ``model_health_page()`` function and
-add it to ``pages()``.
+To add a page, write a ``*_page()`` function and add it to ``pages()``.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-from tram_mlops import alerts, feeds, process, status, storage
+from tram_mlops import alerts, feeds, forecaster, monitoring, process, status, storage
 from tram_mlops.config import load_config, resolve_path
 from tram_mlops.history import History, available_days
 from tram_mlops.train import load_latest, predict_delay
@@ -36,6 +37,9 @@ PROCESSED_DIR = resolve_path(cfg["paths"]["processed_dir"])
 MODELS_DIR = resolve_path(cfg["paths"]["models_dir"])
 RAW_DIR = resolve_path(cfg["paths"]["raw_dir"])
 GTFSRT_DIR = resolve_path(cfg["paths"]["gtfsrt_dir"])
+PREDICTIONS_DIR = resolve_path(cfg["paths"]["predictions_dir"])
+# The forecaster's snapshot counts as current if it is at most this old.
+FORECAST_FRESH_S = 120
 LIVE = cfg["dashboard"]
 TZ = cfg["process"]["timezone"]
 ON_TIME_MIN, ON_TIME_MAX = cfg["process"]["on_time_min_s"], cfg["process"]["on_time_max_s"]
@@ -333,6 +337,64 @@ def render_forecast(df: pd.DataFrame, limit: int | None = None) -> None:
     )
 
 
+@st.cache_data(ttl=60, max_entries=2)
+def scored_forecasts(predictions_dir: Path, today: date) -> pd.DataFrame:
+    """The forecaster's scored forecasts from yesterday and today (UTC)."""
+    return monitoring.read_scored(predictions_dir, today - timedelta(days=1), today)
+
+
+def render_live_forecast(lines: list[str], now: pd.Timestamp) -> None:
+    """The forecaster service's current forecasts, with its live accuracy over the last hour.
+
+    Without a running forecaster (e.g. a local checkout), the dashboard forecasts itself.
+    """
+    snapshot = forecaster.read_latest(PREDICTIONS_DIR)
+    issued = pd.Timestamp(snapshot["issued_at"]) if snapshot else None
+    if snapshot is None or issued is None or (now - issued).total_seconds() > FORECAST_FRESH_S:
+        df = filter_lines(load_live(), lines)
+        if not df.empty:
+            render_forecast(df, limit=15)
+        return
+
+    horizon_min = snapshot["horizon_s"] / 60
+    hour = monitoring.live_metrics(scored_forecasts(PREDICTIONS_DIR, now.date()), now)["1h"]
+    en_route = hour.get("segments", {}).get("en_route", {})
+    if en_route.get("rows"):
+        m1, m2, m3 = st.columns(3)
+        m1.metric(f"Live error, last hour ({horizon_min:g} min ahead)", f"{en_route['model_mae_s']:.0f} s",
+                  help="Mean absolute error of forecasts for trams already en route, scored against "
+                       "the delay they actually had 5 minutes later")
+        m2.metric("Persistence, same forecasts", f"{en_route['persistence_mae_s']:.0f} s",
+                  help="Error from assuming the delay stays as it is now")
+        m3.metric("Improvement", f"{en_route['improvement_pct']} %")
+
+    table = pd.DataFrame(snapshot["forecasts"])
+    if lines and not table.empty:
+        table = table[table["line"].isin(lines)]
+    if table.empty:
+        st.info("No forecasts for these lines right now.")
+        return
+    table["seen"] = pd.to_datetime(table["observed_at"], utc=True).dt.tz_convert(TZ).dt.strftime("%H:%M:%S")
+    table["change"] = table["predicted"] - table["delay_now"]
+    table = table.sort_values("predicted", ascending=False).head(15)
+    st.dataframe(
+        table[["vehicle", "line", "direction", "delay_now", "predicted", "change", "seen"]],
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "vehicle": "Tram", "line": "Line", "direction": "Direction",
+            "delay_now": st.column_config.NumberColumn("Delay now", format="%d s"),
+            "predicted": st.column_config.NumberColumn(f"Forecast in {horizon_min:g} min", format="%.0f s"),
+            "change": st.column_config.NumberColumn("Change", format="%+.0f s",
+                                                    help="Forecast minus delay now"),
+            "seen": "Last seen",
+        },
+    )
+    st.caption(f"Model {snapshot['model_version']} · forecasts issued {helsinki(issued):%H:%M:%S} by the "
+               "forecaster service, which scores every one of them 5 minutes later "
+               "(see Model health)")
+
+
 # --- Live ------------------------------------------------------------------------------
 
 def line_status(now: pd.DataFrame, alert_counts: dict[str, int] | None = None,
@@ -467,7 +529,7 @@ def render_live(lines: list[str]) -> None:
             render_line_status(line_status(now, alert_counts, cancelled_by_line(route_lines, clock)))
 
         st.subheader("Delay forecast")
-        render_forecast(df, limit=15)
+        render_live_forecast(lines, clock)
 
     live_panel()
 
@@ -832,6 +894,106 @@ def status_page() -> None:
                                     "mb": st.column_config.NumberColumn("Size", format="%.1f MB")})
 
 
+# --- Model health ----------------------------------------------------------------------
+
+def health_metrics(window: dict[str, Any], label: str) -> None:
+    """One row of KPIs for a rolling window of scored forecasts."""
+    en_route = window.get("segments", {}).get("en_route", {})
+    overall = window.get("overall", {})
+    c1, c2, c3, c4 = st.columns(4)
+    if en_route.get("rows"):
+        c1.metric(f"En-route error, {label}", f"{en_route['model_mae_s']:.1f} s",
+                  delta=f"{en_route['model_mae_s'] - en_route['persistence_mae_s']:+.1f} s vs persistence",
+                  delta_color="inverse",
+                  help="Trams already moving: the hard case, where the delay changes on the way")
+        c2.metric("Persistence, same forecasts", f"{en_route['persistence_mae_s']:.1f} s")
+    if overall.get("rows"):
+        c3.metric(f"All forecasts, {label}", f"{overall['model_mae_s']:.1f} s",
+                  delta=f"{overall['improvement_pct']:+.0f} % better" if overall.get("improvement_pct") else None,
+                  help="Includes trams waiting to depart, where persistence is badly wrong")
+    c4.metric("Forecasts scored", f"{overall.get('rows', 0):,}",
+              help=f"{window.get('matched_pct', 0):.0f}% of logged forecasts had a true answer; the rest "
+                   "belong to trips that ended within 5 minutes")
+
+
+def mae_chart(errors: pd.DataFrame) -> alt.Chart:
+    long = errors.rename_axis("time").reset_index().melt("time", var_name="Forecast", value_name="MAE (s)")
+    long["time"] = long["time"].dt.tz_convert(TZ).dt.tz_localize(None)
+    return alt.Chart(long).mark_line(point=True).encode(
+        x=alt.X("time:T", title="Helsinki time"),
+        y=alt.Y("MAE (s):Q", title="Mean absolute error (s)"),
+        color=alt.Color("Forecast:N", scale=alt.Scale(domain=["Model", "Persistence"],
+                                                      range=[SEQUENTIAL[3], PUNCTUALITY["On time"]])),
+        tooltip=["time:T", "Forecast:N", alt.Tooltip("MAE (s):Q", format=".1f")],
+    ).properties(height=280)
+
+
+def line_errors(scored: pd.DataFrame) -> pd.DataFrame:
+    """En-route model and persistence error per line, for lines with enough scored forecasts."""
+    df = scored.dropna(subset=["actual"])
+    df = df[df["segment"] == "en_route"]
+    if df.empty:
+        return pd.DataFrame()
+    df = df.assign(model=(df["predicted"] - df["actual"]).abs(), persistence=(df["delay_now"] - df["actual"]).abs())
+    table = df.groupby("line").agg(forecasts=("model", "size"), model=("model", "mean"),
+                                   persistence=("persistence", "mean"))
+    table = table[table["forecasts"] >= 20]
+    table["improvement"] = 100 * (1 - table["model"] / table["persistence"])
+    return table.sort_values("model", ascending=False).reset_index()
+
+
+def model_health_page() -> None:
+    now = pd.Timestamp.now(tz="UTC")
+    st.caption("Every 15 s the forecaster service forecasts each tram's delay 5 minutes ahead. One forecast per "
+               "tram every 30 s is logged and, 5 minutes later, scored against the delay the tram actually "
+               "had, using the same definition the model was trained on. Persistence (\"the delay stays as "
+               "it is\") is scored on the same forecasts.")
+    scored = scored_forecasts(PREDICTIONS_DIR, now.date())
+    if scored.empty:
+        st.info("No scored forecasts yet. Start the forecaster with `python -m tram_mlops.forecaster`; "
+                "the first scores appear about 6 minutes later.")
+        render_model_summary()
+        return
+
+    metrics = monitoring.live_metrics(scored, now)
+    health_metrics(metrics["1h"], "last hour")
+    health_metrics(metrics["24h"], "last 24 h")
+
+    st.subheader("Error over time")
+    segment = st.segmented_control("Trams", ["En route", "Waiting to depart"], default="En route",
+                                   key="health_segment")
+    errors = monitoring.mae_over_time(
+        scored[scored["observed_at"] >= now - pd.Timedelta(hours=24)], freq="15min",
+        segment="before_departure" if segment == "Waiting to depart" else "en_route")
+    if errors.empty:
+        st.info("No scored forecasts for these trams in the last 24 hours.")
+    else:
+        st.altair_chart(mae_chart(errors), width="stretch")
+        st.caption("Mean absolute error per 15-minute window, by when the forecast was made.")
+
+    st.subheader("By line, last 24 h")
+    by_line = line_errors(scored[scored["observed_at"] >= now - pd.Timedelta(hours=24)])
+    if by_line.empty:
+        st.info("Not enough scored en-route forecasts per line yet.")
+    else:
+        st.dataframe(by_line, hide_index=True, width="stretch", column_config={
+            "line": "Line",
+            "forecasts": st.column_config.NumberColumn("Scored", format="localized"),
+            "model": st.column_config.NumberColumn("Model error", format="%.1f s"),
+            "persistence": st.column_config.NumberColumn("Persistence error", format="%.1f s"),
+            "improvement": st.column_config.NumberColumn("Improvement", format="%.0f %%"),
+        })
+        st.caption("Trams en route only, lines with at least 20 scored forecasts. Worst first.")
+
+    st.subheader("Live vs offline test")
+    st.caption("The deployed model's error on its held-out test set when it was trained. A live error well "
+               "above it means the world has changed since training (see roadmap E11, drift).")
+    render_model_summary()
+    versions = metrics["24h"].get("model_versions", [])
+    if len(versions) > 1:
+        st.caption(f"Models live in the last 24 h: {', '.join(versions)}")
+
+
 # --- navigation ------------------------------------------------------------------------
 
 def pages() -> dict[str, Any]:
@@ -843,6 +1005,7 @@ def pages() -> dict[str, Any]:
     entries: list[tuple[Callable[[], None], str, str, str]] = [
         (live_page, "Live", "live", ":material/radar:"),
         (history_page, "History", "history", ":material/bar_chart:"),
+        (model_health_page, "Model health", "model-health", ":material/query_stats:"),
         (status_page, "System", "system", ":material/monitor_heart:"),
     ]
     return {path: st.Page(fn, title=title, url_path=path, icon=icon, default=path == "live")
