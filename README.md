@@ -97,19 +97,39 @@ To run the collector around the clock on a cloud VM, see [deploy/cpouta/](deploy
 
 ## Dashboard
 
-**Live** view (screenshot at the top): trams in service, the share on time, a live map, a line-by-line status board and live forecasts. It refreshes every 15 seconds and warns if the collector stops sending data.
+Three pages, each with its own URL (`/`, `/history`, `/system`). A line filter in the sidebar applies to Live and History and is kept when you switch pages.
 
-**History** view: KPIs and trends for a chosen range of days, including delay and punctuality by hour of day for weekdays and weekends.
+**Live** (`/`, screenshot at the top). It refreshes every 15 seconds and warns if the collector stops sending data. It shows:
+- trams in service, the share on time and a live map coloured by punctuality
+- a line-by-line status board
+- live forecasts
+- **HSL service alerts** for tram lines that are in force now: disruptive ones as banners, all of them in a list with their effect, cause, end time and link
+- **disruptions per line** on the status board: ⚠️ alerts in force, and trips HSL has **cancelled** today (from GTFS-RT trip updates)
+
+An alert counts as a tram alert when it names a tram route (including lettered variants such as `1011H`). Some alerts name only stops; those are assigned to the lines seen at those stops in the positions data. A bus alert that lists a shared stop is not counted.
+
+**History** (`/history`): KPIs for a chosen range of days, then five sections. Only the open section is computed:
+- **Overview:** on-time share and mean delay per service day, delay over time, and the delay distribution coloured early, on time and late
+- **Lines:** a heatmap of on-time share by line and hour of day, and a reliability table per line (on time, mean and 90th-percentile delay, share more than 3 minutes late)
+- **Time of day:** delay and punctuality by hour, weekdays against weekends
+- **Trams:** the map of latest positions, the most delayed trams and the forecast panel (model accuracy against the baseline, and each tram's forecast delay 5 minutes ahead)
+- **Stops:** arrival delay at each stop over the last 24 hours, computed from HFP stop events (arrival time minus scheduled arrival), on a map and as a table of the latest-running stops
+
+**System** (`/system`): the production side of the pipeline:
+- a diagram of the services
+- the freshness and volume of every source today: positions, stop events, trip updates and alerts, each flagged 🟢 live or 🟠 stale
+- the stop events by type
+- every processing run, with the rows kept and the rows dropped under each cleaning rule
+- the deployed model
+- data on disk
 
 ![History overview](docs/images/dashboard_overview.png)
 
-The **map** puts each tram at its latest position, coloured by punctuality. Hover over a tram for its line, delay and last-seen time.
-
 ![Map](docs/images/dashboard_map.png)
 
-The **forecast panel** shows the current model's accuracy against the baseline and each tram's forecast delay 5 minutes ahead.
-
 ![Forecast](docs/images/dashboard_forecast.png)
+
+**Memory.** The container is capped at 1 GB, so every page aggregates in DuckDB and never loads days of rows into pandas. History queries the processed Parquet partitions, and stop events and trip updates are scanned straight from the raw files with only the needed columns. Results are cached: processed data until the next processing run (the cache key includes the manifest's modification time), raw feeds for 5 minutes.
 
 ## Model
 
