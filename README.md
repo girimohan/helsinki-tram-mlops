@@ -239,7 +239,7 @@ helsinki-tram-mlops/
 ├── tests/               # 124 pytest tests, including dashboard and end-to-end pipeline tests
 ├── scripts/             # sample cutter, README figures and screenshots
 ├── data/sample/         # 45-min sample of real data (10 Nov 2026, 07:30–08:15)
-├── docs/                # ROADMAP.md, README figures and screenshots
+├── docs/                # ROADMAP.md, DEVELOPMENT_LOG.md, README figures and screenshots
 ├── deploy/cpouta/       # cloud VM setup guide and script
 ├── Dockerfile, docker-compose.yml
 └── .github/workflows/ci.yml
@@ -287,7 +287,7 @@ python scripts/screenshot_dashboard.py     # drives your installed Chrome; run w
 
 ## Roadmap
 
-The engineering plan (storage, evaluation, retraining, monitoring, serving) is in [docs/ROADMAP.md](docs/ROADMAP.md). Product ideas:
+The engineering plan (storage, evaluation, retraining, monitoring, serving) is in [docs/ROADMAP.md](docs/ROADMAP.md). How the project got here, stage by stage, with the decisions, results and problems along the way, is in [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md). Product ideas:
 
 - **More data.** Run the collector for several weeks so the model sees rush hours, weekends and weather. This is the main lever for the en-route forecast.
 - **Reliability per stop, line and hour.** For example: "Line 7 at Senaatintori, weekdays 8–9 am: on time 62% of the time." The HSL app shows the current delay but not how reliable a line *usually* is.
