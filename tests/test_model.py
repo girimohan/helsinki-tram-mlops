@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from conftest import make_vp
 
-from tram_mlops.features import FEATURES, TARGET, build_training_set
+from tram_mlops.features import FEATURES, TARGET, add_features, build_training_set
 from tram_mlops.process import clean
 from tram_mlops.train import InsufficientDataError, load_latest, predict_delay, save, time_split, train
 
@@ -70,3 +70,14 @@ def test_metrics_report_segments(synthetic_raw):
     segments = metrics["segments"]
     assert sum(s["rows"] for s in segments.values()) == metrics["test_rows"]
     assert all("mae_s" in s["model"] and "mae_s" in s["persistence_baseline"] for s in segments.values())
+
+
+def test_journey_elapsed_handles_trips_starting_after_midnight():
+    # Operating day 2026-02-04, scheduled start 01:50 = 2026-02-05 01:50 Helsinki (23:50 UTC on the 4th).
+    after = clean(pd.DataFrame([make_vp(t=datetime(2026, 2, 4, 23, 55, tzinfo=UTC), oday="2026-02-04",
+                                        start="01:50")]))
+    # A trip that starts before midnight and runs past it is unaffected.
+    across = clean(pd.DataFrame([make_vp(t=datetime(2026, 2, 4, 22, 10, tzinfo=UTC), oday="2026-02-04",
+                                         start="23:50")]))
+    assert add_features(after)["journey_elapsed_s"].iloc[0] == 300
+    assert add_features(across)["journey_elapsed_s"].iloc[0] == 1200

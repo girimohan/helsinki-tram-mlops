@@ -60,11 +60,14 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out["minute_of_day"] = local.dt.hour * 60 + local.dt.minute
     out["at_stop"] = out["at_stop"].astype(int)
 
-    # Scheduled start is "HH:MM" local time on the operating day and may exceed 24:00.
+    # Scheduled start is "HH:MM" local time on a 24-hour clock. An operating day runs until about
+    # 04:30 the next morning, so a trip on operating day D that starts at 01:50 starts on D + 1.
     day_start = pd.to_datetime(out["operating_day"], errors="coerce").dt.tz_localize(
         local.dt.tz, ambiguous="NaT", nonexistent="shift_forward")
     start_offset = pd.to_timedelta(out["start_time"].astype(str) + ":00", errors="coerce")
-    out["journey_elapsed_s"] = (local - (day_start + start_offset)).dt.total_seconds()
+    elapsed = (local - (day_start + start_offset)).dt.total_seconds()
+    # No tram journey lasts 12 hours, so a value that large means the start was after midnight.
+    out["journey_elapsed_s"] = elapsed.where(elapsed < 12 * 3600, elapsed - 86400)
 
     earlier = _lookup(out, -60, 20, "nearest")
     out["delay_change_60s"] = out["delay_s"] - earlier
