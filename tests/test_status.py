@@ -85,3 +85,27 @@ def test_disk_usage_and_last_record_time(tmp_path):
     assert usage.set_index("data").to_dict("index") == {"Positions": {"files": 2, "bytes": 15},
                                                          "Nothing": {"files": 0, "bytes": 0}}
     assert status.last_record_time(tmp_path / "tram_a.jsonl") is None
+
+
+def test_tally_counts_only_new_complete_lines(tmp_path):
+    path = tmp_path / "events_2026-11-11.jsonl"
+    path.write_bytes(b'{"event": "ARS", "veh": 1}\n{"event": "DEP", "veh": 1}\n{"event": "ARS"')
+    first = status.tally(path)
+    assert first.lines == 2 and first.events == {"ARS": 1, "DEP": 1}
+    # The writer finishes the partial line and appends more; only the new bytes are read.
+    with open(path, "ab") as f:
+        f.write(b', "veh": 2}\n{"event": "TLR", "veh": 3}\n')
+    second = status.tally(path)
+    assert second.lines == 4 and second.events == {"ARS": 2, "DEP": 1, "TLR": 1}
+    assert second.offset == path.stat().st_size
+    assert list(status.event_type_counts(path)["event"]) == ["ARS", "DEP", "TLR"]
+    # A replaced, shorter file is counted from the start.
+    path.write_bytes(b'{"event": "VJA"}\n')
+    assert status.tally(path).events == {"VJA": 1}
+
+
+def test_count_lines_on_positions_file(tmp_path):
+    path = tmp_path / "tram_2026-11-11.jsonl"
+    path.write_text("{}\n" * 5)
+    assert status.count_lines(path) == 5
+    assert status.tally(path).events == {}

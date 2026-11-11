@@ -196,7 +196,7 @@ def source_statuses(raw_dir: Path, gtfsrt_dir: Path, today: date) -> list[status
 
 @st.cache_data(ttl=60, max_entries=2)
 def event_counts(path: Path) -> pd.DataFrame:
-    return feeds.event_counts(path)
+    return status.event_type_counts(path)
 
 
 @st.cache_resource
