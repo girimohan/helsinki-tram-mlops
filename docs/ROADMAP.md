@@ -15,10 +15,10 @@ The goal is an end-to-end production MLOps system on a real-world streaming sour
 |---|---|---|
 | Live tram tracking | Done: live map and line status, refreshed every 15 s | E3 (always on, public) |
 | Historical analysis | History view over any range of days (DuckDB), by line and hour of day | E4 (quality reports) |
-| Delay prediction | Gradient boosting, 5 min ahead, against a persistence baseline | E5 (trustworthy evaluation), E13, E14 |
-| Anomaly detection | Not started | E15 |
+| Delay prediction | Gradient boosting, 5 min ahead, against a persistence baseline | E5 (trustworthy evaluation), E16 (HSL's own predictions as a benchmark), E13, E14 |
+| Anomaly detection | Not started | E15, with labels from E16 (alerts, cancellations, skipped stops) |
 | Automated retraining | Manual `train` | E7, E8 |
-| Model monitoring | Offline test metrics only | E6 (live accuracy), E10 (alerts), E11 (drift) |
+| Model monitoring | Offline test metrics only | E6 (live accuracy), E10 (alerts), E11 (drift), E16 (feed freshness) |
 
 ## Principles
 
@@ -35,20 +35,21 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | 1 | [E1 Reproducible pipeline and CI](#e1-reproducible-pipeline-and-ci) | 1–1.5 d | none | **Done** 2026-11-10 |
 | 2 | [E2 Incremental, day-partitioned storage](#e2-incremental-day-partitioned-storage) | 3–4 d | none | **Done** 2026-11-11 |
 | 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **Phases 1–2 done**: collecting since 2026-11-09, public HTTPS dashboard, deploy on green CI, hourly Allas backups ([setup guide](../deploy/cpouta/README.md)). Phase 3 (Terraform) planned |
-| 4 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
-| 5 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | Planned |
-| 6 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | Planned |
-| 7 | [E7 Promotion gate and scheduled retraining](#e7-promotion-gate-and-scheduled-retraining) | 3 d | E2, E5 | Planned |
-| 8 | [E15 Anomaly detection](#e15-anomaly-detection) | 3–4 d | E2, E6, ~2 weeks of data | Planned |
-| 9 | [E12 Packaging and container hardening](#e12-packaging-and-container-hardening) | 1.5–2 d | none | Planned |
-| 10 | [E8 Experiment tracking and model registry](#e8-experiment-tracking-and-model-registry) | 2–3 d | E7 | Planned |
-| 11 | [E10 Metrics, logs and alerts](#e10-metrics-logs-and-alerts) | 3 d | E3 | Planned |
-| 12 | [E11 Drift detection](#e11-drift-detection) | 2 d | E6 | Planned |
-| 13 | [E9 Inference API](#e9-inference-api) | 3–4 d | E6 | Planned |
-| 14 | [E13 Prediction intervals](#e13-prediction-intervals) | 3–4 d | E5, ~2 weeks of data | Planned |
-| 15 | [E14 Network-aware features](#e14-network-aware-features) | 1.5–2 wk | E5, ~3 weeks of data | Planned |
+| 4 | [E16 HSL realtime feeds](#e16-hsl-realtime-feeds-alerts-trip-updates-and-stop-events) | 1–1.5 d to start archiving; about 9 d in all | E3 | Planned: phase 0 next, because no public archive exists |
+| 5 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
+| 6 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | Planned |
+| 7 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | Planned |
+| 8 | [E7 Promotion gate and scheduled retraining](#e7-promotion-gate-and-scheduled-retraining) | 3 d | E2, E5 | Planned |
+| 9 | [E15 Anomaly detection](#e15-anomaly-detection) | 3–4 d | E2, E6, E16, ~2 weeks of data | Planned |
+| 10 | [E12 Packaging and container hardening](#e12-packaging-and-container-hardening) | 1.5–2 d | none | Planned |
+| 11 | [E8 Experiment tracking and model registry](#e8-experiment-tracking-and-model-registry) | 2–3 d | E7 | Planned |
+| 12 | [E10 Metrics, logs and alerts](#e10-metrics-logs-and-alerts) | 3 d | E3 | Planned |
+| 13 | [E11 Drift detection](#e11-drift-detection) | 2 d | E6 | Planned |
+| 14 | [E9 Inference API](#e9-inference-api) | 3–4 d | E6 | Planned |
+| 15 | [E13 Prediction intervals](#e13-prediction-intervals) | 3–4 d | E5, ~2 weeks of data | Planned |
+| 16 | [E14 Network-aware features](#e14-network-aware-features) | 1.5–2 wk | E5, ~3 weeks of data | Planned |
 
-Items 1–7 (about 18 working days) complete the core loop. Item 8 completes the six deliverables. The rest adds depth.
+Items 1–8 complete the core loop. Item 4 comes early only because its data can't be backfilled. Item 9 completes the six deliverables. The rest adds depth.
 
 ---
 
@@ -278,13 +279,107 @@ Items 1–7 (about 18 working days) complete the core loop. Item 8 completes the
   - Robust statistics first (median and MAD baselines computed from historical partitions, robust z-scores). They are explainable and need no labels.
   - Isolation Forest on per-line 10-minute aggregates only if the simple rules miss events.
 - **Model-aware signal:** once E6 logs predictions, a burst of large forecast errors on one line means a disruption the model didn't see coming.
-- **Evaluation:** HSL's public GTFS-RT service alerts serve as weak labels for precision and recall. Anomalies flagged *before* HSL posts an alert count as lead time.
+- **Evaluation:** weak labels from E16:
+  - *reactive* service alerts, i.e. those first seen close to their start (planned works are excluded)
+  - trip cancellations and skipped stops from trip updates
+
+  Precision and recall are measured against these labels. Lead time counts from when we first *saw* an alert, not from its stated start, which can be backdated.
 - **Outputs:**
   - events in `data/anomalies/date=…/` with type, line, vehicle, start and end time, score and the evidence behind them
   - an "Incidents" panel in the Live view
   - an alert through E10
 
 **Changes.** `anomaly.py`, a scoring step in the forecaster loop (E6), a dashboard panel, and `tests/test_anomaly.py` with replayed real incidents as fixtures.
+
+## E16. HSL realtime feeds: alerts, trip updates and stop events
+
+**Why.** The HFP `vp` events we collect show where each tram is and how late it is. HSL publishes three more things the platform needs:
+- **Service alerts:** what is disrupted, and why.
+- **Trip updates:** HSL's own predicted arrival at every remaining stop.
+- **HFP stop events:** exact arrival and departure at each stop, with the scheduled time.
+
+No public archive of alerts or trip updates exists. History only exists if we record it ourselves, so phase 0 should start early ([Principle 1](#principles)).
+
+Sources:
+- [HSL GTFS-RT](https://hsldevcom.github.io/gtfs_rt/)
+- [HFP event types](https://digitransit.fi/en/developers/apis/5-realtime-api/vehicle-positions/high-frequency-positioning/)
+- [GTFS-RT reference](https://gtfs.org/documentation/realtime/reference/)
+- [HSL's transitdata pipeline](https://github.com/HSLdevcom/transitdata)
+
+### What the feeds hold
+
+Measured on 11 Nov 2026, 09:11–09:30 Helsinki time (morning peak).
+
+| Source | Per fetch | Trams | Updates | Verdict |
+|---|---|---|---|---|
+| [Trip updates](https://realtime.hsl.fi/realtime/trip-updates/v2/hsl) | 1.22 MB, never gzipped, always changed | ~234 of 1312 trips | every 15 s | **Collect**, tram trips only, changed trips only: ~18 MB/day as Parquet |
+| [Service alerts](https://realtime.hsl.fi/realtime/service-alerts/v2/hsl) | 27 kB; ETag returns 304 when unchanged | 3 of 23 alerts | every 5 min, and on new alerts | **Collect**, versioned, < 1 MB/day |
+| HFP stop events (`ars`, `arr`, `dep`, `pde`, `pas`, `vja`, `vjout`, `tlr`, `tla`) | same MQTT connection as today | not yet measured | per event | **Collect** raw; measure the volume with a 1-hour probe first |
+| [Static GTFS](https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip) | 88 MB | 33 tram routes | regenerated daily | **Collect** once a day, as a tram subset |
+| [GTFS-RT vehicle positions](https://realtime.hsl.fi/realtime/vehicle-positions/v2/hsl) | 130 kB | ~117 trams | every 1 s | **Skip.** It is built from HFP, so it adds only the next-stop id (100% vs 39% in HFP) and occupancy (37%). Use it only as a Live-view fallback |
+| Digitransit Routing API (GraphQL) | — | — | — | **Skip.** It needs a subscription key and repeats what the feeds above provide. Keep it for debugging |
+
+### Findings that shape the design
+
+- **HSL's 5-minute predictions are no better than persistence.** They have MAE 54 s against 51 s for "the delay stays the same", and they run about 45 s early. That makes them a fair external baseline, and "beats HSL" a meaningful claim. This rests on one 13-minute peak window; E5 confirms it on weeks of data. No published benchmark against HSL's predictions was found.
+- **The two delay definitions differ.** HSL's predicted arrival delay at the next stop is about 50 s lower than HFP's delay (median). Settle whether we predict arrival or departure delay before comparing.
+- **Trip updates have no delay field.** They give only absolute arrival and departure times, so delay is the predicted time minus the scheduled time from static GTFS. That makes static GTFS a dependency, not an extra.
+- **Predictions change only at stop events.** 93.6% of predictions are identical between 15-s polls. Polling every 30 s and storing only changed trips loses little: about 3.5 GB/day downloaded instead of 7 GB, and ~18 MB/day stored.
+- **Trams include route type 900.** Line 15 is light rail (route `2015`, type 900, not 0) and makes up 18% of tram records. Filtering on type 0 alone, or on a `10xx` route pattern, silently drops it.
+- **Today's disruptions appeared in trip updates, not alerts.** Trip updates showed 2 cancelled trips and 100 planned night trips with skipped stops. All 3 tram alerts were informational. Disruption labels need both sources.
+- **Alert quirks:**
+  - Some alerts name only stop ids, with the routes only in the text, so match on tram stop ids too.
+  - Alerts are re-published unchanged every ~5.5 min with a new ETag, so deduplicate on a content hash.
+  - Alerts are revised and withdrawn in place, so keep every version with `first_seen` and `last_seen`.
+- **Bug found and fixed (2026-11-11):** time since scheduled departure (`journey_elapsed_s`, the model's most important feature) was off by 24 h for trips that start after midnight. That was 18,008 rows, 2.7%, on 10 Nov. HFP start times use a 24-hour clock; GTFS-RT uses times past 24:00.
+
+### Joining HFP and GTFS-RT
+
+117 of 118 live trams matched. The one miss, `1013E`, is an extra trip that is not in static GTFS, though it is in trip updates.
+
+```python
+def gtfs_trip_key(route, hfp_dir, oday, start, local_time):
+    h, m = map(int, start.split(":"))              # HFP start: 24-hour local clock
+    if local_time.date().isoformat() != oday and h < 12:
+        h += 24                                    # GTFS-RT: 25:10 for 01:10 on the next morning
+    return f"{route}|{int(hfp_dir) - 1}|{oday.replace('-', '')}|{h:02d}:{m:02d}:00"
+# trip updates: f"{route_id}|{direction_id}|{start_date}|{start_time}"; vehicle id: f"{oper}/{veh}"
+```
+
+- HFP `route` equals GTFS `route_id`, and HFP direction 1/2 is GTFS 0/1. With the wrong direction mapping, 8 trips still "matched", so it fails quietly.
+- About 30 keys a day belong to two trips, so the vehicle is part of the key wherever one is available.
+- No trip IDs: HSL changes them whenever static GTFS is regenerated.
+
+**Leakage rule.** Every join with trip updates or alerts is *as of the time we fetched them*: take the latest snapshot fetched at or before the forecast time, never the final version. Backtests replay stored snapshots.
+
+### Design
+
+- **Stop events:** `ingest.py` subscribes to the stop and journey events on its existing MQTT connection. They aren't downsampled and are written to `data/raw/events_YYYY-MM-DD.jsonl`. At the same time:
+  - move to TLS on port 8883, as HSL recommends
+  - key downsampling on (operator, vehicle) instead of vehicle alone
+- **Poller:** a new compose service, a small Python loop capped at 256 MB:
+  - alerts every 60 s with ETag
+  - trip updates every 30 s, tram routes only, changed trips only
+- **Static GTFS:** `tram-gtfs.timer` fetches it daily with `If-Modified-Since` and keeps the tram subset as `data/static/gtfs/asof=YYYY-MM-DD/`.
+- **Storage:** day partitions with fixed Arrow schemas and the E2 manifest. All of it is covered by the hourly Allas backup.
+  - `stop_visits/date=…`: per vehicle and stop, scheduled, arrival and departure times, dwell and delay
+  - `trip_updates/date=…`: fetch time, trip key, stop, predicted times, schedule relationship
+  - `alerts/alert_versions.parquet`: id, content hash, first and last seen, cause, effect, severity, periods, routes, stops, text in fi/sv/en
+
+### Phases
+
+| Phase | Goal | Changes | Effort | Needs |
+|---|---|---|---|---|
+| 0. Start archiving | Begin the history that can't be backfilled | Poller service (raw alerts and tram trip updates); stop-event subscriptions in the ingester; a 1-hour probe of event volume first | 1–1.5 d | E3 |
+| 1. Static GTFS, versioned | Join keys, stop sequences, scheduled headways | `gtfs_static.py`, the daily timer, a trip-key helper with tests (after midnight, DST, duplicate keys) | 1 d | 0 |
+| 2. Stop visits | Exact arrival, dwell and segment-time truth | `process` handles event partitions; `vja`/`vjout` journey boundaries cross-check the current \|delay\| > 30 min stale-journey rule | 1.5–2 d | 0, E2 |
+| 3. Alerts in the dashboard | Explain *why* a line is late | `alerts.py` versioning (planned vs reactive); alert badges on the Live line board; alert timeline in History | 1.5 d | 0 |
+| 4. Feed freshness and cross-checks | Detect a stale or disagreeing feed | Last-change time per source; stale after 90 s (trip updates) or 10 min (alerts), per [GTFS-RT best practices](https://gtfs.org/documentation/realtime/realtime-best-practices/); HFP vs trip-update disagreement; Live view falls back to GTFS-RT vehicle positions when our MQTT link is stale | 1–1.5 d | 0; feeds E4, E10 |
+| 5. HSL as an external baseline | "Does the model beat HSL?" | As-of join; HSL's predicted delay at t + 5 min, interpolated between stops; scored with persistence and our model on rows where all three exist; HSL's coverage reported separately; added to the backtest, the Model health tab and the E7 gate | 1.5–2 d | 1; E5, E6; ~1 week of trip updates |
+| 6. Features and labels | Use the new data in the models | E14: segment times, stop headways, HSL's predicted delay, an "alert active on this line" flag, all as-of. E15: reactive alerts, cancellations and skipped stops as weak labels | +1 d each on E14 and E15 | 2, 3, 5; 2–3 weeks of data |
+| 7. Traffic-light priority (optional) | Signal-priority denial rate per junction and hour | DuckDB aggregate and dashboard panel, if trams do send `tlr`/`tla` | 0.5–1 d | 2 |
+
+**Licence.** Digitransit data is CC BY 4.0. The attribution must name Digitransit and give the time the data was received ([terms](https://digitransit.fi/en/developers/apis/7-terms-of-use/)).
 
 ---
 
