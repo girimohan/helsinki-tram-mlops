@@ -1,3 +1,6 @@
+# All services share one image (tram-mlops:local), so a deploy that rebuilds the running
+# services also updates the one-off jobs (process, pipeline) started by timers.
+#
 # Host paths and the dashboard's bind address come from environment variables or a
 # .env file next to this one, so the same file runs locally and on a server
 # (see deploy/cpouta/). Defaults suit a local checkout.
@@ -17,6 +20,7 @@ x-logging: &logging
 services:
   ingest:
     build: .
+    image: tram-mlops:local
     command: python -m tram_mlops.ingest
     restart: unless-stopped
     logging: *logging
@@ -28,6 +32,7 @@ services:
   # Archives HSL's GTFS-RT service alerts and tram trip updates (roadmap E16).
   gtfsrt:
     build: .
+    image: tram-mlops:local
     command: python -m tram_mlops.gtfsrt
     restart: unless-stopped
     logging: *logging
@@ -37,6 +42,7 @@ services:
 
   dashboard:
     build: .
+    image: tram-mlops:local
     restart: unless-stopped
     logging: *logging
     # Caps what heavy traffic can take from the collector; Docker restarts it if exceeded.
@@ -71,6 +77,7 @@ services:
   # then rebuild only the day partitions whose raw file changed. A full day peaks at ~0.8 GB.
   process:
     build: .
+    image: tram-mlops:local
     command: python -m tram_mlops.process --compact
     profiles: ["jobs"]
     logging: *logging
@@ -84,6 +91,7 @@ services:
   # One-off: docker compose run --rm pipeline
   pipeline:
     build: .
+    image: tram-mlops:local
     command: sh -c "python -m tram_mlops.process && python -m tram_mlops.train"
     profiles: ["jobs"]
     logging: *logging

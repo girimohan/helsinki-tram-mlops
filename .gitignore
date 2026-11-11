@@ -26,3 +26,6 @@ Thumbs.db
 # OpenStack credentials (contain secrets)
 clouds.yaml
 *openrc*.sh
+
+# Claude Code agent worktrees
+.claude/worktrees/
