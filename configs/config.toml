@@ -75,6 +75,14 @@ refresh_s = 15
 in_service_s = 120
 # Warn that the ingester may have stopped when the newest record is older than this.
 stale_after_s = 120
+# System page: when the stop-event file and the trip-update archive count as stale.
+# Stop events are bursty at quiet hours; trip updates are polled every 30 s.
+events_stale_after_s = 300
+trip_updates_stale_after_s = 120
+# History > Stops: arrival delay per stop from the raw stop events of this many past hours,
+# for stops with at least this many arrivals.
+stop_events_hours = 24
+min_stop_arrivals = 5
 # History view: how many days it shows by default.
 history_days = 7
 # Build the processed dataset on first use if it is missing. Turn off on a public server

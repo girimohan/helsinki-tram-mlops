@@ -1,5 +1,9 @@
 [theme]
 primaryColor = "#2a78d6"
 
+[client]
+# A public site: hide Streamlit's developer menu and "Deploy" button from visitors.
+toolbarMode = "minimal"
+
 [browser]
 gatherUsageStats = false

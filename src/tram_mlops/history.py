@@ -82,9 +82,52 @@ class History:
             "on_time_pct": round(100 * float(row["on_time"]), 1),
         }
 
-    def by_line(self) -> pd.Series:
-        df = self._query("SELECT line, avg(delay_s) AS mean_delay_s FROM {src} GROUP BY line")
-        return df.set_index("line")["mean_delay_s"].round()
+    def by_line(self, late_s: int = 180) -> pd.DataFrame:
+        """Reliability per line: trams, observations, on-time share, mean and 90th-percentile delay,
+        and the share more than ``late_s`` late."""
+        return self._query("""
+            SELECT line, count(DISTINCT vehicle) AS trams, count(*) AS rows,
+                   100 * avg(on_time::INT) AS on_time_pct, avg(delay_s) AS mean_delay_s,
+                   quantile_cont(delay_s, 0.9) AS p90_delay_s, 100 * avg((delay_s > $late)::INT) AS late_pct
+            FROM {src} WHERE line IS NOT NULL GROUP BY line ORDER BY on_time_pct""", late=late_s)
+
+    def line_hour(self) -> pd.DataFrame:
+        """On-time share and mean delay per line and Helsinki hour of day."""
+        return self._query("""
+            SELECT line, hour, 100 * avg(on_time::INT) AS on_time_pct, avg(delay_s) AS mean_delay_s,
+                   count(*) AS rows
+            FROM {src} WHERE line IS NOT NULL GROUP BY line, hour ORDER BY line, hour""")
+
+    def by_day(self) -> pd.DataFrame:
+        """KPIs per HSL service day (``operating_day``, which runs past midnight)."""
+        df = self._query("""
+            SELECT operating_day AS day, count(*) AS rows, count(DISTINCT vehicle) AS trams,
+                   100 * avg(on_time::INT) AS on_time_pct, avg(delay_s) AS mean_delay_s
+            FROM {src} WHERE operating_day IS NOT NULL GROUP BY ALL ORDER BY day""")
+        df["day"] = pd.to_datetime(df["day"], errors="coerce")
+        return df.dropna(subset=["day"]).reset_index(drop=True)
+
+    def delay_histogram(self, bin_s: int = 30, lo: int = -300, hi: int = 900) -> pd.DataFrame:
+        """Observations per ``bin_s`` delay bin; delays outside ``lo``..``hi`` fall in the end bins."""
+        return self._query("""
+            SELECT (floor(greatest(least(delay_s, $hi - 1), $lo) / $bin) * $bin)::INT AS bin, count(*) AS rows
+            FROM {src} GROUP BY bin ORDER BY bin""", bin=bin_s, lo=lo, hi=hi)
+
+    def network(self) -> tuple[dict[str, str], dict[str, list[str]]]:
+        """Tram route id -> line, and stop id -> lines seen there, from the last day in range (all lines).
+
+        Used to tell which HSL alerts (which name GTFS routes and stops) concern trams.
+        """
+        if self.empty:
+            return {}, {}
+        routes = self._query("""
+            SELECT route, mode(line) AS line FROM {src}
+            WHERE route IS NOT NULL AND line IS NOT NULL GROUP BY route""", files=self.files[-1:], lines=[])
+        stops = self._query("""
+            SELECT stop::BIGINT AS stop, list(DISTINCT line ORDER BY line) AS lines FROM {src}
+            WHERE stop IS NOT NULL AND line IS NOT NULL GROUP BY 1""", files=self.files[-1:], lines=[])
+        return (dict(zip(routes["route"], routes["line"], strict=True)),
+                {str(s): list(lines) for s, lines in zip(stops["stop"], stops["lines"], strict=True)})
 
     def over_time(self, bucket_s: int) -> pd.Series:
         """Mean delay per time bucket, indexed by Helsinki wall-clock time."""
