@@ -10,6 +10,7 @@
 #   DASHBOARD_BIND  address the dashboard listens on           (default 127.0.0.1, this machine only)
 #   TRAM_PUBLIC_HOST, COMPOSE_PROFILES=public
 #                   serve the dashboard over HTTPS at this hostname through Caddy (server only)
+#   GROQ_API_KEY    key for the dashboard's Ask page (optional; https://console.groq.com/keys)
 
 x-logging: &logging
   driver: json-file
@@ -62,6 +63,8 @@ services:
     mem_limit: 1g
     environment:
       TRAM_DASHBOARD_PROCESS_ON_DEMAND: ${TRAM_DASHBOARD_PROCESS_ON_DEMAND:-true}
+      # Key for the Ask page's chat model ([chat] in configs/config.toml); the page explains itself without one.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
     ports:
       - "${DASHBOARD_BIND:-127.0.0.1}:8501:8501"
     volumes:

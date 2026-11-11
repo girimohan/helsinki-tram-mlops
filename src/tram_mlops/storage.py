@@ -196,6 +196,19 @@ def dataset_glob(root: Path) -> str:
     return (root / "date=*" / PARTITION_FILE).as_posix()
 
 
+def write_json_atomic(path: Path, data: Any) -> None:
+    """Replace ``path`` with ``data`` as JSON, so readers see the old file or the new one, never half."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, separators=(",", ":"), ensure_ascii=False)
+        os.chmod(tmp, FILE_MODE)
+        os.replace(tmp, path)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
 # --- append-only logs ------------------------------------------------------------------
 
 def append_gzip_jsonl(path: Path, records: list[dict[str, Any]]) -> None:

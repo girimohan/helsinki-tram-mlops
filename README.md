@@ -59,7 +59,7 @@ flowchart LR
 | **Archive GTFS-RT** | `python -m tram_mlops.gtfsrt` | Records HSL's service alerts and the tram part of its trip updates (HSL's own arrival predictions), keeping only what changed. Nobody else archives these feeds. |
 | **Process** | `python -m tram_mlops.process` | Parses and deduplicates records, fixes the delay sign, removes stale journeys and converts times to Helsinki local time. Writes one Parquet partition per day with a fixed schema, and skips days that haven't changed since the last run (`--since`, `--rebuild` to reprocess). |
 | **Train** | `python -m tram_mlops.train` | Builds features from the most recent days, splits by time, trains gradient boosting, compares it with the baseline, and saves a versioned model. |
-| **Dashboard** | `streamlit run src/tram_mlops/dashboard.py` | **Live** (positions, alerts, cancellations, the forecaster's forecasts), **History** (DuckDB over the day partitions, so it stays fast as weeks of data build up), **Model health** (live accuracy against persistence) and **System** (freshness of every source, processing runs, deployed model). |
+| **Dashboard** | `streamlit run src/tram_mlops/dashboard.py` | **Live** (positions, alerts, cancellations, the forecaster's forecasts), **Ask** (questions in plain language, answered by an LLM that calls read-only lookups over the data), **History** (DuckDB over the day partitions, so it stays fast as weeks of data build up), **Model health** (live accuracy against persistence) and **System** (freshness of every source, processing runs, deployed model). |
 
 ## Quick start
 
@@ -98,7 +98,7 @@ To run the collector around the clock on a cloud VM, see [deploy/cpouta/](deploy
 
 ## Dashboard
 
-Three pages, each with its own URL (`/`, `/history`, `/system`). A line filter in the sidebar applies to Live and History and is kept when you switch pages.
+Five pages, each with its own URL (`/`, `/ask`, `/history`, `/model-health`, `/system`). A line filter in the sidebar applies to Live and History and is kept when you switch pages.
 
 **Live** (`/`, screenshot at the top). It refreshes every 15 seconds and warns if the collector stops sending data. It shows:
 - trams in service, the share on time and a live map coloured by punctuality
@@ -108,6 +108,19 @@ Three pages, each with its own URL (`/`, `/history`, `/system`). A line filter i
 - **disruptions per line** on the status board: ⚠️ alerts in force, and trips HSL has **cancelled** today (from GTFS-RT trip updates)
 
 An alert counts as a tram alert when it names a tram route (including lettered variants such as `1011H`). Some alerts name only stops; those are assigned to the lines seen at those stops in the positions data. A bus alert that lists a shared stop is not counted.
+
+**Ask** (`/ask`): a chat window for questions such as *"When is the next tram at Lasipalatsi?"*, *"How is line 4 doing?"* or *"Which line was least punctual this week?"*. An LLM (Groq's free tier by default, any OpenAI-compatible API works) chooses among six read-only tools and writes the answer from what they return; it never sees the data otherwise and cannot run queries of its own.
+
+| Tool | Answers from |
+|---|---|
+| `next_trams` | HSL's predicted arrival at every remaining stop of each tram trip, with the tram's delay now from its live position |
+| `find_stop` | Stop names and platform codes from static GTFS, and the lines stopping there now |
+| `line_status` | Live positions per line or per tram, with destination, next stop and the model's 5-minute delay forecast |
+| `service_alerts` | HSL's service alerts for trams in force now |
+| `punctuality` | The processed history, by line, hour of day or day |
+| `forecast_accuracy` | The forecaster's scored forecasts against persistence |
+
+Each answer lists the lookups behind it. Stop names come from static GTFS, since the realtime feeds use ids only. The GTFS-RT archiver keeps the latest poll of tram trips in one small file, so a lookup takes milliseconds instead of scanning the day's archive (about 19 s). Visitors share one free API quota, so questions are capped per minute, per day and per visit (`[chat]` in the config). Without an API key the page explains how to add one.
 
 **History** (`/history`): KPIs for a chosen range of days, then five sections. Only the open section is computed:
 - **Overview:** on-time share and mean delay per service day, delay over time, and the delay distribution coloured early, on time and late
@@ -215,13 +228,15 @@ helsinki-tram-mlops/
 │   ├── alerts.py        # HSL service alerts that affect tram lines, active now
 │   ├── feeds.py         # DuckDB queries over raw stop events and trip updates
 │   ├── status.py        # data-source freshness and processing runs for the System page
+│   ├── chat_tools.py    # read-only lookups the Ask page's LLM can call
+│   ├── chat.py          # tool-calling loop over an OpenAI-compatible chat API (Groq by default)
 │   ├── features.py      # leakage-free features and 5-min-ahead target
 │   ├── train.py         # time split, model, baseline, versioning
 │   ├── evaluate.py      # rolling-origin backtest, two baselines, bootstrap intervals
-│   ├── dashboard.py     # Streamlit app: Live, History, Model health, System
+│   ├── dashboard.py     # Streamlit app: Live, Ask, History, Model health, System
 │   └── config.py        # TOML config with env-var overrides
 ├── configs/config.toml  # every tunable setting
-├── tests/               # 98 pytest tests, including dashboard and end-to-end pipeline tests
+├── tests/               # 122 pytest tests, including dashboard and end-to-end pipeline tests
 ├── scripts/             # sample cutter, README figures and screenshots
 ├── data/sample/         # 45-min sample of real data (10 Nov 2026, 07:30–08:15)
 ├── docs/                # ROADMAP.md, README figures and screenshots
@@ -243,7 +258,7 @@ TRAM_INGEST_SAMPLE_INTERVAL_S=5 python -m tram_mlops.ingest
 
 ```bash
 pip install -r requirements-dev.txt   # pinned test, lint and type-check tools
-pytest --cov                          # 98 tests, about 45 s; fails below 80% coverage
+pytest --cov                          # 122 tests, about 45 s; fails below 80% coverage
 ruff check src tests scripts
 mypy
 pre-commit install                    # run ruff, mypy and file checks on every commit

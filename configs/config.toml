@@ -95,3 +95,28 @@ history_days = 7
 # Build the processed dataset on first use if it is missing. Turn off on a public server
 # (TRAM_DASHBOARD_PROCESS_ON_DEMAND=false) so a page view can never start a full processing run.
 process_on_demand = true
+
+[chat]
+# The dashboard's Ask page (python -m tram_mlops.chat asks from the command line). Any
+# OpenAI-compatible chat API works; Groq's free tier needs no card. Get a key at
+# https://console.groq.com/keys and put it in the environment variable named below.
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+model = "openai/gpt-oss-120b"
+# Used when the first model is rate limited or fails; free-tier limits are per model.
+fallback_model = "openai/gpt-oss-20b"
+# gpt-oss models think before answering; "low" keeps answers quick and saves tokens. Empty = provider default.
+reasoning_effort = "low"
+temperature = 0.2
+# Rounds of tool calls before the model must answer, and how much of each result it reads.
+max_tool_rounds = 4
+max_tool_result_chars = 6000
+# Earlier messages sent along for follow-up questions.
+history_messages = 6
+max_question_chars = 500
+# Groq's free tier allows about 30 requests and 8,000 tokens a minute per model, and 1,000
+# requests a day; a question takes 2-3 requests. These caps keep visitors within it.
+questions_per_session = 30
+questions_per_minute = 6
+questions_per_day = 300
+timeout_s = 30
