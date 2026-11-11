@@ -57,6 +57,13 @@ test_fraction = 0.25
 min_training_rows = 200
 random_state = 42
 
+[evaluate]
+# Backtest (python -m tram_mlops.evaluate): each test day is predicted by a model trained on
+# up to this many earlier days, the same window the deployed model is trained on.
+train_days = 3
+# Skip test days with fewer testable rows than this (e.g. a day the collector started late).
+min_test_rows = 1000
+
 [forecast]
 # The forecaster service (python -m tram_mlops.forecaster) forecasts every tram this often,
 # from the last window_min minutes of collected data.

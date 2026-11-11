@@ -88,8 +88,8 @@ def future_delay(feats: pd.DataFrame, horizon_s: float, tolerance_s: float) -> p
 def build_training_set(df: pd.DataFrame, horizon_s: float, tolerance_s: float) -> pd.DataFrame:
     """Features plus the delay observed ``horizon_s`` later; rows without a future match are dropped."""
     if df.empty:
-        return pd.DataFrame(columns=FEATURES + [TARGET, "timestamp"])
+        return pd.DataFrame(columns=FEATURES + [TARGET, "timestamp", "vehicle", "journey_id"])
     out = add_features(df)
     out[TARGET] = future_delay(out, horizon_s, tolerance_s)
     out = out.dropna(subset=[TARGET])
-    return out[FEATURES + [TARGET, "timestamp", "vehicle"]].reset_index(drop=True)
+    return out[FEATURES + [TARGET, "timestamp", "vehicle", "journey_id"]].reset_index(drop=True)

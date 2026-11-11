@@ -81,15 +81,7 @@ def train(df: pd.DataFrame, horizon_s: float, tolerance_s: float, test_fraction:
     train_df, test_df = time_split(data, test_fraction, horizon_s)
     if train_df.empty or test_df.empty:
         raise InsufficientDataError("time split produced an empty train or test set")
-    empty = [c for c in FEATURES if train_df[c].isna().all()]
-    if empty:
-        raise InsufficientDataError(
-            f"features {empty} have no values in the training data; observations are too sparse or "
-            f"short-lived (e.g. delay_change_60s needs each trip to be seen for over a minute)"
-        )
-
-    model = make_model(random_state)
-    model.fit(train_df[FEATURES], train_df[TARGET] - train_df["delay_s"])
+    model = fit(train_df, random_state)
     predicted = test_df["delay_s"] + model.predict(test_df[FEATURES])
 
     metrics: dict[str, Any] = {
@@ -117,6 +109,19 @@ def train(df: pd.DataFrame, horizon_s: float, tolerance_s: float, test_fraction:
                 "persistence_baseline": _scores(test_df.loc[mask, TARGET], test_df.loc[mask, "delay_s"]),
             }
     return model, metrics
+
+
+def fit(train_df: pd.DataFrame, random_state: int = 42) -> Pipeline:
+    """Fit the model on rows from ``build_training_set``; it learns the *change* in delay."""
+    empty = [c for c in FEATURES if train_df[c].isna().all()]
+    if empty:
+        raise InsufficientDataError(
+            f"features {empty} have no values in the training data; observations are too sparse or "
+            f"short-lived (e.g. delay_change_60s needs each trip to be seen for over a minute)"
+        )
+    model = make_model(random_state)
+    model.fit(train_df[FEATURES], train_df[TARGET] - train_df["delay_s"])
+    return model
 
 
 def segment_masks(data: pd.DataFrame) -> dict[str, pd.Series]:

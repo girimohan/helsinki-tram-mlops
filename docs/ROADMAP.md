@@ -15,7 +15,7 @@ The goal is an end-to-end production MLOps system on a real-world streaming sour
 |---|---|---|
 | Live tram tracking | Done: live map and line status, refreshed every 15 s | E3 (always on, public) |
 | Historical analysis | History view over any range of days (DuckDB), by line and hour of day | E4 (quality reports) |
-| Delay prediction | Gradient boosting, 5 min ahead, against a persistence baseline | E5 (trustworthy evaluation), E16 (HSL's own predictions as a benchmark), E13, E14 |
+| Delay prediction | Gradient boosting, 5 min ahead; backtested day by day against two baselines with bootstrap intervals | E17, E16 (HSL's own predictions as a benchmark), E13, E14 |
 | Anomaly detection | Not started | E15, with labels from E16 (alerts, cancellations, skipped stops) |
 | Automated retraining | Manual `train` | E7, E8 |
 | Model monitoring | Offline test metrics only | E6 (live accuracy), E10 (alerts), E11 (drift), E16 (feed freshness) |
@@ -38,7 +38,8 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | 4 | [E16 HSL realtime feeds](#e16-hsl-realtime-feeds-alerts-trip-updates-and-stop-events) | 1–1.5 d to start archiving; about 9 d in all | E3 | **Phase 0 done** 2026-11-11: archiving alerts, tram trip updates and stop events |
 | 5 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
 | 6 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | **Done** 2026-11-11: forecaster service, live metrics, Model health page |
-| 7 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | Planned |
+| 7 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | **Done** 2026-11-11 (re-run as data grows) |
+| 7b | [E17 Large-delay weakness](#e17-large-delay-weakness) | 1 d | E5 | Planned: found by E5; blocks E7's slice rule |
 | 8 | [E7 Promotion gate and scheduled retraining](#e7-promotion-gate-and-scheduled-retraining) | 3 d | E2, E5 | Planned |
 | 9 | [E15 Anomaly detection](#e15-anomaly-detection) | 3–4 d | E2, E6, E16, ~2 weeks of data | Planned |
 | 10 | [E12 Packaging and container hardening](#e12-packaging-and-container-hardening) | 1.5–2 d | none | Planned |
@@ -156,6 +157,18 @@ Items 1–8 complete the core loop. Item 4 comes early only because its data can
 - The README results are generated from `reports/backtest/<run>.json`.
 
 **Changes.** `evaluate.py`; `time_split` and `train()` take explicit time windows.
+
+**Done 2026-11-11.**
+- **Method:** `python -m tram_mlops.evaluate` tests every collected day with a model trained on up to `evaluate.train_days` earlier days. Features are built across the window, so trips crossing midnight keep their history. Training rows are purged at the test day's start.
+- **Baselines:** persistence, and line × hour × segment mean change.
+- **Bootstrap:** a Poisson bootstrap over whole trips, 1,000 repetitions.
+- **Breakdowns:** by hour, line, weekday vs weekend, and current delay.
+- **Output:** `reports/backtest/<run>.json` and `latest.md`; `--update-readme` writes the README results block.
+- **First run** (test days 10–11 Nov, 775k rows, 4,294 trips): en route, the model scores 39.2 s MAE against 43.3 s for persistence and 43.2 s for line × hour. The difference is −4.1 s, 95% CI [−4.5, −3.8]: the en-route gain is now distinguishable from noise.
+- **Findings:**
+  - The line × hour baseline is no better than persistence for trams en route, so delay changes have no stable per-line or per-hour drift. It does help a lot before departure (80.7 s vs 204.4 s).
+  - The model is **worse than persistence for trams already 3+ minutes late**: 47.7 vs 46.3 s at 3–5 min, and 115.9 vs 82.5 s above 5 min, on about 6% of en-route rows. See E17.
+  - The data so far is weekdays only.
 
 ## E6. Prediction logging and live accuracy
 
@@ -411,6 +424,21 @@ def gtfs_trip_key(route, hfp_dir, oday, start, local_time):
 - **Dependency pin:** `gtfs-realtime-bindings` is held at 2.x because 3.x needs protobuf 7, which Streamlit 1.54 doesn't allow.
 
 **Licence.** Digitransit data is CC BY 4.0. The attribution must name Digitransit and give the time the data was received ([terms](https://digitransit.fi/en/developers/apis/7-terms-of-use/)).
+
+## E17. Large-delay weakness
+
+**Why.** The E5 backtest shows the model beats persistence overall but is clearly worse for trams already more than 3 minutes late, which are the trips riders care about most. Above 5 minutes late its MAE is 116 s against 82 s for persistence. It seems to pull large delays back toward normal too quickly, perhaps because large delays are rare in training (1.7% of en-route rows are above 5 minutes) and some of them recover quickly at terminals. E7's gate rule "no slice gets worse by more than Y%" would block a model like this, which is the point of the rule.
+
+**Design.**
+- **Diagnose:** residuals by current delay, line and journey progress, and whether the worst cases are a few trips (e.g. stale sign-ins just below the 30-min cut) or many.
+- **Candidates,** each judged by the backtest's `delay_now` breakdown:
+  - more weight on large-delay rows
+  - a loss less sensitive to outliers (absolute or Huber, since MAE is the metric)
+  - features for the delay *level* relative to the line's usual delay
+  - a gated fallback to persistence above a threshold the backtest picks
+- **Acceptance:** no `delay_now` slice worse than persistence, with the en-route gain kept.
+
+**Changes.** `train.py` (loss and weights), maybe `features.py`, and a regression test on the breakdown.
 
 ---
 
