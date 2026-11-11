@@ -1,12 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 import pandas as pd
 import pytest
 from conftest import make_vp
 
 from tram_mlops.features import FEATURES, TARGET, add_features, build_training_set
 from tram_mlops.process import clean
-from tram_mlops.train import InsufficientDataError, load_latest, predict_delay, save, time_split, train
+from tram_mlops.train import InsufficientDataError, fit, load_latest, predict_delay, save, time_split, train
 
 T0 = datetime(2026, 2, 4, 10, 0, tzinfo=UTC)
 
@@ -81,3 +82,37 @@ def test_journey_elapsed_handles_trips_starting_after_midnight():
                                          start="23:50")]))
     assert add_features(after)["journey_elapsed_s"].iloc[0] == 300
     assert add_features(across)["journey_elapsed_s"].iloc[0] == 1200
+
+
+def late_tram_rows(n: int, seed: int) -> pd.DataFrame:
+    """Training rows shaped like the E17 finding: trams more than 5 min late keep losing about 30 s
+    per 5 min, but a few (8%) recover 10 min at once, at random. Others just jitter."""
+    rng = np.random.default_rng(seed)
+    delay = rng.uniform(-60, 900, n).round()
+    late = delay > 300
+    change = np.where(late, 30 + rng.normal(0, 8, n), rng.normal(0, 20, n))
+    change = np.where(late & (rng.random(n) < 0.08), -600, change)
+    rows = pd.DataFrame({
+        "line": rng.choice(["1", "4", "9"], n), "direction": rng.choice(["1", "2"], n), "delay_s": delay,
+        "delay_change_60s": rng.normal(0, 10, n), "journey_elapsed_s": rng.uniform(0, 3000, n),
+        "speed_mps": rng.uniform(0, 12, n), "doors_open": rng.integers(0, 2, n), "at_stop": rng.integers(0, 2, n),
+        "occupancy": 0, "lat": 60.17, "lon": 24.94, "hour": rng.integers(5, 23, n), "weekday": 2,
+        "minute_of_day": rng.integers(300, 1400, n),
+    })
+    rows[TARGET] = delay + change
+    return rows
+
+
+@pytest.mark.parametrize("loss,beats_persistence", [("absolute_error", True), ("squared_error", False)])
+def test_late_trams_are_not_forecast_to_recover_by_outliers(loss, beats_persistence):
+    """E17 regression: for trams more than 5 min late, the deployed loss must beat persistence.
+
+    Squared error chases the rare sudden recoveries and forecasts every late tram to catch up,
+    which is worse than assuming the delay stays the same; this case proves the test catches it.
+    """
+    train_rows, test_rows = late_tram_rows(6000, seed=1), late_tram_rows(3000, seed=2)
+    model = fit(train_rows, loss=loss)
+    late = test_rows[test_rows["delay_s"] > 300]
+    model_mae = (late["delay_s"] + model.predict(late[FEATURES]) - late[TARGET]).abs().mean()
+    persistence_mae = (late["delay_s"] - late[TARGET]).abs().mean()
+    assert bool(model_mae < persistence_mae) is beats_persistence, (model_mae, persistence_mae)

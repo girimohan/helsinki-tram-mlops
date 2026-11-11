@@ -1,0 +1,512 @@
+{
+  "run": "20261111T185826Z",
+  "horizon_s": 300,
+  "loss": "absolute_error",
+  "train_days": 3,
+  "test_days": [
+    "2026-11-10",
+    "2026-11-11"
+  ],
+  "data_from": "2026-11-09",
+  "data_to": "2026-11-11",
+  "pooled": {
+    "rows": 1077045,
+    "trips": 5789,
+    "overall": {
+      "model": 35.23,
+      "persistence": 64.7,
+      "line_hour": 48.03
+    },
+    "segments": {
+      "before_departure": {
+        "rows": 142272,
+        "model": 19.67,
+        "persistence": 204.59,
+        "line_hour": 79.1
+      },
+      "en_route": {
+        "rows": 934773,
+        "model": 37.59,
+        "persistence": 43.41,
+        "line_hour": 43.3
+      }
+    },
+    "en_route_vs_baselines": {
+      "persistence": {
+        "diff_s": -5.82,
+        "ci_low_s": -5.97,
+        "ci_high_s": -5.67,
+        "trips": 5770
+      },
+      "line_hour": {
+        "diff_s": -5.71,
+        "ci_low_s": -5.86,
+        "ci_high_s": -5.56,
+        "trips": 5770
+      }
+    },
+    "breakdowns": {
+      "hour": [
+        {
+          "group": "0",
+          "rows": 7196,
+          "model": 51.11,
+          "persistence": 60.89,
+          "line_hour": 61.96
+        },
+        {
+          "group": "1",
+          "rows": 4245,
+          "model": 39.57,
+          "persistence": 55.29,
+          "line_hour": 50.83
+        },
+        {
+          "group": "2",
+          "rows": 1022,
+          "model": 50.68,
+          "persistence": 61.22,
+          "line_hour": 62.38
+        },
+        {
+          "group": "4",
+          "rows": 2048,
+          "model": 26.65,
+          "persistence": 33.04,
+          "line_hour": 32.66
+        },
+        {
+          "group": "5",
+          "rows": 23649,
+          "model": 38.97,
+          "persistence": 42.3,
+          "line_hour": 42.36
+        },
+        {
+          "group": "6",
+          "rows": 45096,
+          "model": 38.21,
+          "persistence": 43.2,
+          "line_hour": 42.53
+        },
+        {
+          "group": "7",
+          "rows": 57778,
+          "model": 37.57,
+          "persistence": 42.83,
+          "line_hour": 42.53
+        },
+        {
+          "group": "8",
+          "rows": 60939,
+          "model": 38.59,
+          "persistence": 44.09,
+          "line_hour": 43.77
+        },
+        {
+          "group": "9",
+          "rows": 60345,
+          "model": 37.77,
+          "persistence": 43.21,
+          "line_hour": 43.1
+        },
+        {
+          "group": "10",
+          "rows": 58195,
+          "model": 36.27,
+          "persistence": 42.08,
+          "line_hour": 42.04
+        },
+        {
+          "group": "11",
+          "rows": 58131,
+          "model": 36.01,
+          "persistence": 41.65,
+          "line_hour": 41.58
+        },
+        {
+          "group": "12",
+          "rows": 58235,
+          "model": 35.62,
+          "persistence": 41.61,
+          "line_hour": 41.82
+        },
+        {
+          "group": "13",
+          "rows": 58306,
+          "model": 35.81,
+          "persistence": 41.98,
+          "line_hour": 42.0
+        },
+        {
+          "group": "14",
+          "rows": 59219,
+          "model": 40.72,
+          "persistence": 46.63,
+          "line_hour": 47.27
+        },
+        {
+          "group": "15",
+          "rows": 60925,
+          "model": 39.97,
+          "persistence": 45.86,
+          "line_hour": 45.68
+        },
+        {
+          "group": "16",
+          "rows": 63231,
+          "model": 39.47,
+          "persistence": 45.25,
+          "line_hour": 44.83
+        },
+        {
+          "group": "17",
+          "rows": 61889,
+          "model": 38.17,
+          "persistence": 43.93,
+          "line_hour": 43.67
+        },
+        {
+          "group": "18",
+          "rows": 58992,
+          "model": 36.93,
+          "persistence": 43.01,
+          "line_hour": 42.74
+        },
+        {
+          "group": "19",
+          "rows": 50920,
+          "model": 36.5,
+          "persistence": 42.72,
+          "line_hour": 42.54
+        },
+        {
+          "group": "20",
+          "rows": 34289,
+          "model": 35.25,
+          "persistence": 41.6,
+          "line_hour": 42.29
+        },
+        {
+          "group": "21",
+          "rows": 21746,
+          "model": 34.9,
+          "persistence": 41.52,
+          "line_hour": 41.13
+        },
+        {
+          "group": "22",
+          "rows": 17313,
+          "model": 34.36,
+          "persistence": 39.99,
+          "line_hour": 40.01
+        },
+        {
+          "group": "23",
+          "rows": 11047,
+          "model": 34.41,
+          "persistence": 40.77,
+          "line_hour": 40.02
+        }
+      ],
+      "line": [
+        {
+          "group": "1",
+          "rows": 75106,
+          "model": 41.91,
+          "persistence": 45.61,
+          "line_hour": 45.31
+        },
+        {
+          "group": "10",
+          "rows": 47552,
+          "model": 36.95,
+          "persistence": 41.94,
+          "line_hour": 41.55
+        },
+        {
+          "group": "10H",
+          "rows": 244,
+          "model": 34.4,
+          "persistence": 35.53,
+          "line_hour": 35.32
+        },
+        {
+          "group": "11",
+          "rows": 33135,
+          "model": 36.62,
+          "persistence": 42.76,
+          "line_hour": 42.65
+        },
+        {
+          "group": "11H",
+          "rows": 283,
+          "model": 36.28,
+          "persistence": 47.1,
+          "line_hour": 46.86
+        },
+        {
+          "group": "12",
+          "rows": 47514,
+          "model": 37.88,
+          "persistence": 53.1,
+          "line_hour": 52.15
+        },
+        {
+          "group": "13",
+          "rows": 21998,
+          "model": 34.79,
+          "persistence": 40.48,
+          "line_hour": 40.72
+        },
+        {
+          "group": "15",
+          "rows": 166100,
+          "model": 25.13,
+          "persistence": 34.28,
+          "line_hour": 34.32
+        },
+        {
+          "group": "1H",
+          "rows": 799,
+          "model": 39.45,
+          "persistence": 45.74,
+          "line_hour": 44.76
+        },
+        {
+          "group": "2",
+          "rows": 50197,
+          "model": 39.59,
+          "persistence": 42.28,
+          "line_hour": 42.59
+        },
+        {
+          "group": "2H",
+          "rows": 319,
+          "model": 43.28,
+          "persistence": 42.85,
+          "line_hour": 53.44
+        },
+        {
+          "group": "3",
+          "rows": 75798,
+          "model": 42.77,
+          "persistence": 47.39,
+          "line_hour": 48.11
+        },
+        {
+          "group": "3H",
+          "rows": 221,
+          "model": 65.47,
+          "persistence": 155.61,
+          "line_hour": 18.75
+        },
+        {
+          "group": "4",
+          "rows": 59832,
+          "model": 38.54,
+          "persistence": 41.41,
+          "line_hour": 41.25
+        },
+        {
+          "group": "4H",
+          "rows": 419,
+          "model": 47.65,
+          "persistence": 48.73,
+          "line_hour": 50.95
+        },
+        {
+          "group": "5",
+          "rows": 47651,
+          "model": 38.75,
+          "persistence": 41.76,
+          "line_hour": 41.56
+        },
+        {
+          "group": "5H",
+          "rows": 352,
+          "model": 37.23,
+          "persistence": 40.76,
+          "line_hour": 38.39
+        },
+        {
+          "group": "6",
+          "rows": 66885,
+          "model": 42.03,
+          "persistence": 47.76,
+          "line_hour": 47.43
+        },
+        {
+          "group": "7",
+          "rows": 100183,
+          "model": 42.24,
+          "persistence": 47.24,
+          "line_hour": 47.05
+        },
+        {
+          "group": "7H",
+          "rows": 1734,
+          "model": 51.23,
+          "persistence": 55.16,
+          "line_hour": 57.67
+        },
+        {
+          "group": "8",
+          "rows": 33751,
+          "model": 42.0,
+          "persistence": 44.52,
+          "line_hour": 44.62
+        },
+        {
+          "group": "8H",
+          "rows": 214,
+          "model": 49.7,
+          "persistence": 47.96,
+          "line_hour": 57.28
+        },
+        {
+          "group": "9",
+          "rows": 89024,
+          "model": 39.65,
+          "persistence": 45.38,
+          "line_hour": 45.34
+        },
+        {
+          "group": "9H",
+          "rows": 677,
+          "model": 45.59,
+          "persistence": 44.65,
+          "line_hour": 44.78
+        },
+        {
+          "group": "H",
+          "rows": 14525,
+          "model": 45.29,
+          "persistence": 48.11,
+          "line_hour": 46.57
+        }
+      ],
+      "day_type": [
+        {
+          "group": "weekday",
+          "rows": 934773,
+          "model": 37.59,
+          "persistence": 43.41,
+          "line_hour": 43.3
+        }
+      ],
+      "delay_now": [
+        {
+          "group": "> 1 min early",
+          "rows": 70639,
+          "model": 40.78,
+          "persistence": 48.29,
+          "line_hour": 47.37
+        },
+        {
+          "group": "0\u20131 min early",
+          "rows": 232606,
+          "model": 37.51,
+          "persistence": 43.64,
+          "line_hour": 43.27
+        },
+        {
+          "group": "0\u20131 min late",
+          "rows": 329649,
+          "model": 35.39,
+          "persistence": 40.65,
+          "line_hour": 40.77
+        },
+        {
+          "group": "1\u20133 min late",
+          "rows": 241868,
+          "model": 37.12,
+          "persistence": 43.13,
+          "line_hour": 43.25
+        },
+        {
+          "group": "3\u20135 min late",
+          "rows": 44580,
+          "model": 41.05,
+          "persistence": 45.88,
+          "line_hour": 45.85
+        },
+        {
+          "group": "> 5 min late",
+          "rows": 15431,
+          "model": 68.66,
+          "persistence": 74.11,
+          "line_hour": 72.32
+        }
+      ]
+    }
+  },
+  "per_day": [
+    {
+      "day": "2026-11-10",
+      "train_rows": 74719,
+      "test_rows": 582886,
+      "segments": {
+        "before_departure": {
+          "rows": 79124,
+          "model": 21.07,
+          "persistence": 205.35,
+          "line_hour": 81.47
+        },
+        "en_route": {
+          "rows": 503762,
+          "model": 39.26,
+          "persistence": 43.47,
+          "line_hour": 43.38
+        }
+      },
+      "en_route_vs_baselines": {
+        "persistence": {
+          "diff_s": -4.21,
+          "ci_low_s": -4.41,
+          "ci_high_s": -4.03,
+          "trips": 3150
+        },
+        "line_hour": {
+          "diff_s": -4.12,
+          "ci_low_s": -4.3,
+          "ci_high_s": -3.94,
+          "trips": 3150
+        }
+      }
+    },
+    {
+      "day": "2026-11-11",
+      "train_rows": 657810,
+      "test_rows": 494159,
+      "segments": {
+        "before_departure": {
+          "rows": 63148,
+          "model": 17.93,
+          "persistence": 203.63,
+          "line_hour": 76.12
+        },
+        "en_route": {
+          "rows": 431011,
+          "model": 35.64,
+          "persistence": 43.35,
+          "line_hour": 43.2
+        }
+      },
+      "en_route_vs_baselines": {
+        "persistence": {
+          "diff_s": -7.71,
+          "ci_low_s": -7.88,
+          "ci_high_s": -7.48,
+          "trips": 2623
+        },
+        "line_hour": {
+          "diff_s": -7.56,
+          "ci_low_s": -7.72,
+          "ci_high_s": -7.31,
+          "trips": 2623
+        }
+      }
+    }
+  ]
+}

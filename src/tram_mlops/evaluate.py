@@ -33,7 +33,7 @@ import pandas as pd
 from tram_mlops import storage
 from tram_mlops.config import PROJECT_ROOT, load_config, resolve_path
 from tram_mlops.features import FEATURES, TARGET, build_training_set
-from tram_mlops.train import fit, segment_masks
+from tram_mlops.train import DEFAULT_LOSS, fit, segment_masks
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def line_hour_baseline(train: pd.DataFrame, test: pd.DataFrame, min_rows: int = 
 # --- one test day ----------------------------------------------------------------------
 
 def backtest_day(positions: pd.DataFrame, day: date, horizon_s: float, tolerance_s: float,
-                 random_state: int = 42) -> pd.DataFrame | None:
+                 random_state: int = 42, loss: str = DEFAULT_LOSS) -> pd.DataFrame | None:
     """Predictions of every method for every testable row of ``day``, or None if untestable."""
     data = build_training_set(positions, horizon_s, tolerance_s)
     start = pd.Timestamp(day, tz="UTC")
@@ -78,7 +78,7 @@ def backtest_day(positions: pd.DataFrame, day: date, horizon_s: float, tolerance
     test = data[(data["timestamp"] >= start) & (data["timestamp"] < end)]
     if train.empty or test.empty:
         return None
-    model = fit(train, random_state)
+    model = fit(train, random_state, loss)
     out = test[["timestamp", "vehicle", "journey_id", "line", "hour", "weekday", "delay_s", TARGET]].copy()
     out["segment"] = _segment(test)
     out["model"] = test["delay_s"] + model.predict(test[FEATURES])
@@ -159,7 +159,7 @@ def run(train_days: int | None = None, reps: int = 1000, out_dir: Path | None = 
     for day in days[1:]:
         positions = storage.read_positions(root, day - timedelta(days=train_days), day)
         pred = backtest_day(positions, day, model_cfg["horizon_s"], model_cfg["horizon_tolerance_s"],
-                            model_cfg["random_state"])
+                            model_cfg["random_state"], model_cfg.get("loss", DEFAULT_LOSS))
         del positions
         if pred is None or len(pred) < eval_cfg["min_test_rows"]:
             log.info("%s: not enough data to test", day)
@@ -179,6 +179,7 @@ def run(train_days: int | None = None, reps: int = 1000, out_dir: Path | None = 
     report = {
         "run": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
         "horizon_s": model_cfg["horizon_s"],
+        "loss": model_cfg.get("loss", DEFAULT_LOSS),
         "train_days": train_days,
         "test_days": [d["day"] for d in per_day],
         "data_from": days[0].isoformat(),

@@ -56,6 +56,10 @@ horizon_tolerance_s = 60
 test_fraction = 0.25
 min_training_rows = 200
 random_state = 42
+# Training loss of the gradient boosting model. The metric is MAE, which absolute error optimises
+# directly. Squared error is pulled by the rare tram whose delay suddenly drops a lot, so it
+# forecast recovery for trams already 5+ min late that then lost more time (roadmap E17).
+loss = "absolute_error"
 
 [evaluate]
 # Backtest (python -m tram_mlops.evaluate): each test day is predicted by a model trained on

@@ -33,7 +33,10 @@ class InsufficientDataError(RuntimeError):
     pass
 
 
-def make_model(random_state: int = 42) -> Pipeline:
+DEFAULT_LOSS = "absolute_error"
+
+
+def make_model(random_state: int = 42, loss: str = DEFAULT_LOSS) -> Pipeline:
     encode = ColumnTransformer(
         [("cat", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=np.nan,
                                 encoded_missing_value=np.nan), CATEGORICAL)],
@@ -42,6 +45,7 @@ def make_model(random_state: int = 42) -> Pipeline:
     )
     # The regressor predicts the *change* in delay; predict_delay adds it back.
     regressor = HistGradientBoostingRegressor(
+        loss=loss,
         categorical_features=list(range(len(CATEGORICAL))),
         max_iter=300,
         learning_rate=0.05,
@@ -71,7 +75,7 @@ def _scores(y_true: pd.Series, y_pred: pd.Series | np.ndarray) -> dict[str, floa
 
 
 def train(df: pd.DataFrame, horizon_s: float, tolerance_s: float, test_fraction: float = 0.25,
-          min_rows: int = 200, random_state: int = 42) -> tuple[Pipeline, dict]:
+          min_rows: int = 200, random_state: int = 42, loss: str = DEFAULT_LOSS) -> tuple[Pipeline, dict]:
     data = build_training_set(df, horizon_s, tolerance_s)
     if len(data) < min_rows:
         raise InsufficientDataError(
@@ -81,11 +85,12 @@ def train(df: pd.DataFrame, horizon_s: float, tolerance_s: float, test_fraction:
     train_df, test_df = time_split(data, test_fraction, horizon_s)
     if train_df.empty or test_df.empty:
         raise InsufficientDataError("time split produced an empty train or test set")
-    model = fit(train_df, random_state)
+    model = fit(train_df, random_state, loss)
     predicted = test_df["delay_s"] + model.predict(test_df[FEATURES])
 
     metrics: dict[str, Any] = {
         "horizon_s": horizon_s,
+        "loss": loss,
         "train_rows": len(train_df),
         "test_rows": len(test_df),
         "train_vehicles": int(train_df["vehicle"].nunique()),
@@ -111,7 +116,7 @@ def train(df: pd.DataFrame, horizon_s: float, tolerance_s: float, test_fraction:
     return model, metrics
 
 
-def fit(train_df: pd.DataFrame, random_state: int = 42) -> Pipeline:
+def fit(train_df: pd.DataFrame, random_state: int = 42, loss: str = DEFAULT_LOSS) -> Pipeline:
     """Fit the model on rows from ``build_training_set``; it learns the *change* in delay."""
     empty = [c for c in FEATURES if train_df[c].isna().all()]
     if empty:
@@ -119,7 +124,7 @@ def fit(train_df: pd.DataFrame, random_state: int = 42) -> Pipeline:
             f"features {empty} have no values in the training data; observations are too sparse or "
             f"short-lived (e.g. delay_change_60s needs each trip to be seen for over a minute)"
         )
-    model = make_model(random_state)
+    model = make_model(random_state, loss)
     model.fit(train_df[FEATURES], train_df[TARGET] - train_df["delay_s"])
     return model
 
@@ -179,6 +184,7 @@ def run(horizon_s: float | None = None) -> dict:
         test_fraction=model_cfg["test_fraction"],
         min_rows=model_cfg["min_training_rows"],
         random_state=model_cfg["random_state"],
+        loss=model_cfg.get("loss", DEFAULT_LOSS),
     )
     out = save(model, metrics, resolve_path(paths["models_dir"]))
     log.info("Saved model to %s", out)

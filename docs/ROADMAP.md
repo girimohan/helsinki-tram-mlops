@@ -15,7 +15,7 @@ The goal is an end-to-end production MLOps system on a real-world streaming sour
 |---|---|---|
 | Live tram tracking | Done: live map and line status, refreshed every 15 s | E3 (always on, public) |
 | Historical analysis | History view over any range of days (DuckDB), by line and hour of day | E4 (quality reports) |
-| Delay prediction | Gradient boosting, 5 min ahead; backtested day by day against two baselines with bootstrap intervals | E17, E16 (HSL's own predictions as a benchmark), E13, E14 |
+| Delay prediction | Gradient boosting, 5 min ahead; backtested day by day against two baselines with bootstrap intervals; beats persistence at every level of current delay | E16 (HSL's own predictions as a benchmark), E13, E14 |
 | Anomaly detection | Not started | E15, with labels from E16 (alerts, cancellations, skipped stops) |
 | Automated retraining | Manual `train` | E7, E8 |
 | Model monitoring | Offline test metrics only | E6 (live accuracy), E10 (alerts), E11 (drift), E16 (feed freshness) |
@@ -40,7 +40,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | 5 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
 | 6 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | **Done** 2026-11-11: forecaster service, live metrics, Model health page |
 | 7 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | **Done** 2026-11-11 (re-run as data grows) |
-| 7b | [E17 Large-delay weakness](#e17-large-delay-weakness) | 1 d | E5 | Planned: found by E5; blocks E7's slice rule |
+| 7b | [E17 Large-delay weakness](#e17-large-delay-weakness) | 1 d | E5 | **Done** 2026-11-11: absolute-error loss; every delay slice now beats persistence |
 | 8 | [E7 Promotion gate and scheduled retraining](#e7-promotion-gate-and-scheduled-retraining) | 3 d | E2, E5 | Planned |
 | 9 | [E15 Anomaly detection](#e15-anomaly-detection) | 3–4 d | E2, E6, E16, ~2 weeks of data | Planned |
 | 10 | [E12 Packaging and container hardening](#e12-packaging-and-container-hardening) | 1.5–2 d | none | Planned |
@@ -441,6 +441,35 @@ def gtfs_trip_key(route, hfp_dir, oday, start, local_time):
 - **Acceptance:** no `delay_now` slice worse than persistence, with the en-route gain kept.
 
 **Changes.** `train.py` (loss and weights), maybe `features.py`, and a regression test on the breakdown.
+
+**Done 2026-11-11.**
+- **Diagnosis** (backtest test days 10–11 Nov, trams en route more than 5 min late):
+  - **Direction:** the model forecast these trams to *recover* 40–67 s in the next 5 minutes; they actually lost about 10 s more (median). It did so on every line except line 10 and at every stage of the journey.
+  - **Concentration:** 10 of 295 trips gave 57% of the excess error. Most were line 3 on 10 Nov, with delays up to 29 min.
+  - **Training data:** mean and median changes for late trams in training were positive too. So the forecast recovery was not in the data; the squared-error trees were fitting the rare sudden drops (the 10th percentile of change is −70 to −130 s).
+- **Candidates,** scored on 11 Nov (658k training rows), en-route MAE for trams > 5 min late (persistence 59.8 s):
+
+  | Variant | > 5 min late | 3–5 min late | All en route | Before departure |
+  |---|---:|---:|---:|---:|
+  | Squared error (before) | 69.5 s | 39.4 s | 36.1 s | 19.8 s |
+  | **Absolute error** | **53.5 s** | **39.2 s** | **35.8 s** | **18.0 s** |
+  | Squared, late rows weighted ×5 | 80.1 s | 39.4 s | 36.8 s | 20.5 s |
+  | Absolute, late rows weighted ×5 | 62.9 s | 39.1 s | 36.3 s | 18.1 s |
+  | Squared, persistence above 5 min | 59.8 s | 39.4 s | 35.9 s | 19.8 s |
+
+  Weighting late rows made it worse: it amplifies the same outliers. The persistence gate only hides the problem. Absolute error was best or tied in every column, on both test days.
+- **Change:** `[model] loss = "absolute_error"` (`train.make_model`, used by `train` and the backtest; recorded in `metrics.json` and the backtest report). Training takes about 1.7× as long (17 s vs 10 s for 658k rows).
+- **Regression test:** `test_late_trams_are_not_forecast_to_recover_by_outliers` builds late trams that keep losing time, 8% of which recover 10 min at random. Absolute error must beat persistence on them, and squared error must fail, which shows the test catches the bug.
+- **Backtest** `20261111T185826Z`, pooled over 10–11 Nov:
+
+  | Current delay | Persistence | Before (squared) | Now (absolute) |
+  |---|---:|---:|---:|
+  | 3–5 min late | 45.9 s | 47.7 s | **41.0 s** |
+  | > 5 min late | 74.1 s | 115.9 s | **68.7 s** |
+  | All en route | 43.4 s | 39.2 s | **37.6 s** |
+
+  The "before" column comes from the E5 run, whose 11 Nov had fewer hours of data. On 10 Nov, with identical data, en-route MAE went from 40.3 s to 39.3 s.
+- **Unblocks** E7's rule that no slice may get worse.
 
 ## E18. Chat assistant
 
