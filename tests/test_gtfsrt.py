@@ -6,7 +6,7 @@ import zipfile
 import pytest
 from google.transit import gtfs_realtime_pb2 as rt
 
-from tram_mlops import gtfsrt
+from tram_mlops import gtfsrt, storage
 
 TRAMS = {"1009", "2015"}
 
@@ -73,11 +73,15 @@ def test_alerts_are_kept_only_when_their_content_changes():
 
 def test_gzip_members_append_and_read_back(tmp_path):
     path = tmp_path / "trip_updates_2026-11-11.jsonl.gz"
-    gtfsrt.append_gzip_lines(path, [{"a": 1}])
-    gtfsrt.append_gzip_lines(path, [])
-    gtfsrt.append_gzip_lines(path, [{"a": 2}, {"a": 3}])
+    storage.append_gzip_jsonl(path, [{"a": 1}])
+    storage.append_gzip_jsonl(path, [])
+    storage.append_gzip_jsonl(path, [{"a": 2}, {"a": 3}])
     with gzip.open(path, "rt") as f:
         assert [json.loads(line)["a"] for line in f] == [1, 2, 3]
+    # A crash mid-write leaves a truncated member; the reader keeps everything before it.
+    with open(path, "ab") as f:
+        f.write(gzip.compress(b'{"a": 4}\n')[:15])
+    assert [r["a"] for r in storage.read_gzip_jsonl(path)] == [1, 2, 3]
 
 
 def test_fetch_treats_304_as_unchanged(monkeypatch):

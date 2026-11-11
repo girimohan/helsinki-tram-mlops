@@ -196,6 +196,37 @@ def dataset_glob(root: Path) -> str:
     return (root / "date=*" / PARTITION_FILE).as_posix()
 
 
+# --- append-only logs ------------------------------------------------------------------
+
+def append_gzip_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    """Append records as one gzip member.
+
+    Concatenated members read back as one stream with ``gzip.open``, so a crash loses at
+    most the batch being written.
+    """
+    if not records:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = "".join(json.dumps(r, separators=(",", ":"), default=str) + "\n" for r in records)
+    with open(path, "ab") as f:
+        f.write(gzip.compress(data.encode("utf-8"), compresslevel=6, mtime=0))
+
+
+def read_gzip_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Records from an append-only gzip JSONL log, ignoring a truncated final member or line."""
+    records = []
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except (EOFError, gzip.BadGzipFile, OSError):
+        pass  # the writer was interrupted mid-member; keep what was read before it
+    return records
+
+
 # --- manifest --------------------------------------------------------------------------
 
 def load_manifest(root: Path) -> dict[str, Any]:

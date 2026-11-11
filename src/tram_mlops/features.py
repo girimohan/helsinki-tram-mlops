@@ -76,11 +76,20 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def future_delay(feats: pd.DataFrame, horizon_s: float, tolerance_s: float) -> pd.Series:
+    """The target: each row's trip delay at the first observation ``horizon_s`` (+ ``tolerance_s``) later.
+
+    Training (``build_training_set``) and live scoring (``forecaster``) both use this, so the
+    live "true answer" is defined exactly as the model was trained on.
+    """
+    return _lookup(feats, horizon_s, tolerance_s, "forward")
+
+
 def build_training_set(df: pd.DataFrame, horizon_s: float, tolerance_s: float) -> pd.DataFrame:
     """Features plus the delay observed ``horizon_s`` later; rows without a future match are dropped."""
     if df.empty:
         return pd.DataFrame(columns=FEATURES + [TARGET, "timestamp"])
     out = add_features(df)
-    out[TARGET] = _lookup(out, horizon_s, tolerance_s, "forward")
+    out[TARGET] = future_delay(out, horizon_s, tolerance_s)
     out = out.dropna(subset=[TARGET])
     return out[FEATURES + [TARGET, "timestamp", "vehicle"]].reset_index(drop=True)

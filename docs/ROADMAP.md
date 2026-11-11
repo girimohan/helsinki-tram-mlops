@@ -37,7 +37,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **Phases 1–2 done**: collecting since 2026-11-09, public HTTPS dashboard, deploy on green CI, hourly Allas backups ([setup guide](../deploy/cpouta/README.md)). Phase 3 (Terraform) planned |
 | 4 | [E16 HSL realtime feeds](#e16-hsl-realtime-feeds-alerts-trip-updates-and-stop-events) | 1–1.5 d to start archiving; about 9 d in all | E3 | **Phase 0 done** 2026-11-11: archiving alerts, tram trip updates and stop events |
 | 5 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
-| 6 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | Planned |
+| 6 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | **Backend done** 2026-11-11: forecaster service and live metrics; Model health tab next |
 | 7 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | Planned |
 | 8 | [E7 Promotion gate and scheduled retraining](#e7-promotion-gate-and-scheduled-retraining) | 3 d | E2, E5 | Planned |
 | 9 | [E15 Anomaly detection](#e15-anomaly-detection) | 3–4 d | E2, E6, E16, ~2 weeks of data | Planned |
@@ -168,6 +168,19 @@ Items 1–8 complete the core loop. Item 4 comes early only because its data can
 - **Dashboard:** a "Model health" tab. The live forecasts come from the forecaster, so the model no longer runs inside the dashboard.
 
 **Changes.** `forecaster.py`, `monitoring.py`, a compose service, a dashboard tab.
+
+**Backend done 2026-11-11.**
+- **Forecaster service:**
+  - every 15 s it forecasts each tram from its newest observation (0.5 s per cycle on live data, ~115 trams)
+  - it writes `data/predictions/latest.json` for the dashboard
+  - it logs one forecast per tram every 30 s to `forecasts_YYYY-MM-DD.jsonl.gz`
+- **Scoring:**
+  - the actual delay comes from `features.future_delay`, the function that also builds the training target
+  - forecasts whose observations fell out of the window because the service stalled are counted as expired, not as misses
+- **Live accuracy:** `monitoring.live_metrics` gives model and persistence MAE over the last hour and 24 hours, by segment, plus the share of forecasts that found a true answer.
+- **Model:** retrained on 9–11 Nov (614k training rows). On the last 12 hours: en-route MAE 36.3 s vs 43.9 s for persistence (−17%); overall 34.2 s vs 64.7 s. This is still one split, which E5 replaces with backtests.
+  - Training peaked at 1.2 GB, too much for the VM, so it ran on a laptop. E7 must bound training memory, for example by sampling days or keeping fewer columns.
+- **Deploy fix:** all compose services now share one image. Timer-started jobs had been running stale code.
 
 ## E7. Promotion gate and scheduled retraining
 

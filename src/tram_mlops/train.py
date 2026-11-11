@@ -147,8 +147,12 @@ def load_latest(models_dir: Path) -> tuple[Pipeline, dict] | None:
 
 def predict_delay(model: Pipeline, df: pd.DataFrame) -> pd.Series:
     """Forecast delay_s at the model's horizon for each row of a cleaned positions table."""
-    feats = add_features(df)
-    return pd.Series(feats["delay_s"].to_numpy() + model.predict(feats[FEATURES]), index=df.index)
+    return predict_from_features(model, add_features(df))
+
+
+def predict_from_features(model: Pipeline, feats: pd.DataFrame) -> pd.Series:
+    """Forecast from rows that already have ``add_features`` columns (the model predicts the change)."""
+    return pd.Series(feats["delay_s"].to_numpy() + model.predict(feats[FEATURES]), index=feats.index)
 
 
 def run(horizon_s: float | None = None) -> dict:

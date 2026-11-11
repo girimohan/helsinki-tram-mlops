@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import gzip
 import hashlib
 import io
 import json
@@ -42,6 +41,7 @@ from google.protobuf.json_format import MessageToDict
 from google.transit import gtfs_realtime_pb2
 
 from tram_mlops.config import load_config, resolve_path
+from tram_mlops.storage import append_gzip_jsonl
 
 log = logging.getLogger(__name__)
 
@@ -197,16 +197,6 @@ class AlertArchive:
 
 # --- storage ---------------------------------------------------------------------------
 
-def append_gzip_lines(path: Path, records: list[dict[str, Any]]) -> None:
-    """Append records as one gzip member; concatenated members read back as one stream."""
-    if not records:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = "".join(json.dumps(r, separators=(",", ":")) + "\n" for r in records).encode("utf-8")
-    with open(path, "ab") as f:
-        f.write(gzip.compress(data, compresslevel=6, mtime=0))
-
-
 def daily_path(directory: Path, prefix: str, fetched_at: datetime) -> Path:
     return directory / f"{prefix}_{fetched_at:%Y-%m-%d}.jsonl.gz"
 
@@ -243,7 +233,7 @@ class Poller:
         now = datetime.now(UTC)
         result = fetch(self.cfg["trip_updates_url"])
         lines = self.trips.changes(parse_feed(result.body), self.routes, now.isoformat(timespec="seconds"))
-        append_gzip_lines(daily_path(self.out_dir, "trip_updates", now), lines)
+        append_gzip_jsonl(daily_path(self.out_dir, "trip_updates", now), lines)
         self.stats["trip_lines"] += len(lines)
 
     def poll_alerts(self) -> None:
@@ -253,7 +243,7 @@ class Poller:
             return
         self.alert_validators = (result.etag, result.last_modified)
         lines = self.alerts.changes(parse_feed(result.body), now.isoformat(timespec="seconds"))
-        append_gzip_lines(daily_path(self.out_dir, "alerts", now), lines)
+        append_gzip_jsonl(daily_path(self.out_dir, "alerts", now), lines)
         self.stats["alert_snapshots"] += len(lines)
 
     def run(self, duration_s: float | None = None) -> None:

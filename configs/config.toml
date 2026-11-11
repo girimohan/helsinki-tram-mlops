@@ -7,6 +7,7 @@ raw_dir = "data/raw"
 sample_file = "data/sample/tram_sample.jsonl.gz"
 processed_dir = "data/processed/positions"
 gtfsrt_dir = "data/raw/gtfsrt"
+predictions_dir = "data/predictions"
 models_dir = "models"
 
 [ingest]
@@ -55,6 +56,16 @@ horizon_tolerance_s = 60
 test_fraction = 0.25
 min_training_rows = 200
 random_state = 42
+
+[forecast]
+# The forecaster service (python -m tram_mlops.forecaster) forecasts every tram this often,
+# from the last window_min minutes of collected data.
+interval_s = 15
+window_min = 15
+# Log (and later score) at most one forecast per tram this often.
+log_every_s = 30
+# Don't forecast trams whose newest observation is older than this.
+max_age_s = 120
 
 [dashboard]
 # Live mode reads this much recent raw data straight from the ingester's files.

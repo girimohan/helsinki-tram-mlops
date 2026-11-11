@@ -21,12 +21,21 @@ rc() { rclone --config "$CONF" --stats-one-line --stats-log-level NOTICE --stats
 # (tram_, events_, gtfsrt/trip_updates_, gtfsrt/alerts_), so today's are the ones still growing.
 today="$(date -u +%F)"
 rc copy "$DATA_ROOT/data/raw" "allas:$ALLAS_BUCKET/data/raw" --exclude "*${today}*"
+# Scored forecasts can't be recreated later, so they are backed up like raw data.
+if [[ -d "$DATA_ROOT/data/predictions" ]]; then
+    rc copy "$DATA_ROOT/data/predictions" "allas:$ALLAS_BUCKET/data/predictions" \
+        --exclude "*${today}*" --exclude "latest.json"
+fi
 rc copy "$DATA_ROOT/models" "allas:$ALLAS_BUCKET/models"
 
 # rclone refuses to upload a file that changes mid-transfer, so upload snapshots of
 # today's files. A partial last line (or gzip member) is harmless: readers skip it.
 snapshot="$(mktemp -d)"
 trap 'rm -rf "$snapshot"' EXIT
-(cd "$DATA_ROOT/data/raw" && find . -type f -name "*${today}*" -exec cp --parents {} "$snapshot/" \;)
-rc copy "$snapshot" "allas:$ALLAS_BUCKET/data/raw"
-echo "Backed up $DATA_ROOT/data/raw and $DATA_ROOT/models to allas:$ALLAS_BUCKET"
+for dir in raw predictions; do
+    [[ -d "$DATA_ROOT/data/$dir" ]] || continue
+    mkdir -p "$snapshot/$dir"
+    (cd "$DATA_ROOT/data/$dir" && find . -type f -name "*${today}*" -exec cp --parents {} "$snapshot/$dir/" \;)
+    rc copy "$snapshot/$dir" "allas:$ALLAS_BUCKET/data/$dir"
+done
+echo "Backed up raw data, forecasts and models to allas:$ALLAS_BUCKET"
