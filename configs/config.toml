@@ -4,7 +4,7 @@
 
 [paths]
 raw_dir = "data/raw"
-sample_file = "data/sample/raw_tram_data.jsonl"
+sample_file = "data/sample/tram_sample.jsonl.gz"
 processed_file = "data/processed/tram_positions.parquet"
 models_dir = "models"
 

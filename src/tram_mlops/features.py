@@ -6,6 +6,8 @@ later on the same journey. Features only use the current and earlier observation
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 
 CATEGORICAL = ["line", "direction"]
@@ -31,7 +33,8 @@ def _trip_key(df: pd.DataFrame) -> pd.Series:
     return df["vehicle"].astype(str) + "#" + df["journey_id"]
 
 
-def _lookup(df: pd.DataFrame, offset_s: float, tolerance_s: float, direction: str) -> pd.Series:
+def _lookup(df: pd.DataFrame, offset_s: float, tolerance_s: float,
+            direction: Literal["backward", "forward", "nearest"]) -> pd.Series:
     """Delay of the same trip at the observation nearest ``timestamp + offset_s``."""
     left = pd.DataFrame({
         "key": _trip_key(df),

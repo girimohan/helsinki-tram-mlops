@@ -1,14 +1,15 @@
+import gzip
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
-
 from conftest import make_vp
-from tram_mlops.config import load_config, resolve_path
+
 from tram_mlops import process
+from tram_mlops.config import load_config, resolve_path
 from tram_mlops.process import clean, load_raw, load_recent, summarize
 
 
@@ -29,7 +30,7 @@ def test_rows_missing_delay_or_timestamp_are_dropped():
 
 
 def test_local_hour_uses_helsinki_time():
-    raw = pd.DataFrame([make_vp(t=datetime(2026, 2, 4, 10, 30, tzinfo=timezone.utc))])
+    raw = pd.DataFrame([make_vp(t=datetime(2026, 2, 4, 10, 30, tzinfo=UTC))])
     assert clean(raw)["hour"].iloc[0] == 12  # UTC+2 in winter
 
 
@@ -52,12 +53,24 @@ def test_load_raw_skips_malformed_lines(tmp_path):
 
 def test_bundled_sample_processes():
     sample = resolve_path(load_config()["paths"]["sample_file"])
-    df = clean(load_raw([sample]))
+    df = process.clean_with_config(load_raw([sample]))
     stats = summarize(df)
-    # 13,200 lines: every record appears twice, and 181 unique records have no delay.
-    assert stats["rows"] == 6419
+    # 30,135 records: 321 have no delay and 245 are on non-public line "000" (26 are both).
+    assert stats["rows"] == 30135 - 321 - 245 + 26
     assert stats["vehicles"] > 100
-    assert df["delay_s"].between(-3600, 3600).all()
+    assert df["delay_s"].between(-1800, 1800).all()
+    assert "000" not in set(df["line"])
+
+
+def test_load_raw_reads_gzip(tmp_path):
+    path = tmp_path / "tram_2026-02-04.jsonl.gz"
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        f.write(json.dumps(make_vp()) + "\n" + json.dumps(make_vp(veh=2)) + "\n")
+    (tmp_path / "tram_2026-02-05.jsonl").write_text(json.dumps(make_vp(veh=3)) + "\n")
+    files = process.find_raw_files([tmp_path])
+    # Day order, whether or not a day has been compressed yet.
+    assert [f.name for f in files] == ["tram_2026-02-04.jsonl.gz", "tram_2026-02-05.jsonl"]
+    assert sorted(load_raw(files)["veh"]) == [1, 2, 3]
 
 
 def test_implausible_delays_are_dropped():
@@ -75,7 +88,7 @@ def _write_jsonl(path, records, trailing=""):
 
 
 def test_load_recent_reads_only_the_window(tmp_path):
-    t0 = datetime(2026, 2, 4, 10, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 2, 4, 10, 0, tzinfo=UTC)
     records = [make_vp(veh=i % 5, t=t0 + timedelta(seconds=10 * i)) for i in range(600)]
     _write_jsonl(tmp_path / "tram_2026-02-04.jsonl", records, trailing='{"partial": ')
     now = pd.Timestamp(t0 + timedelta(seconds=10 * 599))
@@ -87,8 +100,8 @@ def test_load_recent_reads_only_the_window(tmp_path):
 
 
 def test_load_recent_spans_utc_midnight(tmp_path):
-    before = datetime(2026, 2, 4, 23, 59, 30, tzinfo=timezone.utc)
-    after = datetime(2026, 2, 5, 0, 0, 30, tzinfo=timezone.utc)
+    before = datetime(2026, 2, 4, 23, 59, 30, tzinfo=UTC)
+    after = datetime(2026, 2, 5, 0, 0, 30, tzinfo=UTC)
     _write_jsonl(tmp_path / "tram_2026-02-04.jsonl", [make_vp(t=before - timedelta(hours=1)), make_vp(t=before)])
     _write_jsonl(tmp_path / "tram_2026-02-05.jsonl", [make_vp(t=after)])
     raw = load_recent(tmp_path, pd.Timedelta(minutes=5), now=pd.Timestamp(after))

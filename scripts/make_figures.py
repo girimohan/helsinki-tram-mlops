@@ -114,7 +114,7 @@ def model_evaluation(df: pd.DataFrame, model, metrics: dict, test_fraction: floa
         values = [seg[key]["mae_s"] for _, seg in segments]
         top_value = max(top_value, *values)
         bars = ax1.bar(x + side * (width / 2 + 0.01), values, width, color=color, label=label, zorder=2)
-        for bar, value in zip(bars, values):
+        for bar, value in zip(bars, values, strict=True):
             ax1.text(bar.get_x() + bar.get_width() / 2, value + 3, f"{value:.0f} s",
                      ha="center", va="bottom", color=TEXT, fontsize=9.5)
     ax1.set_xticks(x, [f"{name}\n({seg['rows']:,} test rows)" for name, seg in segments])

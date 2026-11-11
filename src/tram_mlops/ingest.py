@@ -10,7 +10,7 @@ import argparse
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
 
@@ -27,7 +27,8 @@ class RawWriter:
     def __init__(self, raw_dir: Path, sample_interval_s: float = 0):
         self.raw_dir = raw_dir
         self.sample_interval_s = sample_interval_s
-        self._last_kept: dict[int, float] = {}
+        # Keyed by vehicle; a record without one is still stored and dropped later by process.clean.
+        self._last_kept: dict[int | None, float] = {}
         self._day: str | None = None
         self._handle: IO[str] | None = None
         self.written = 0
@@ -37,9 +38,10 @@ class RawWriter:
             self.close()
             self.raw_dir.mkdir(parents=True, exist_ok=True)
             path = self.raw_dir / f"tram_{day}.jsonl"
-            self._handle = open(path, "a", encoding="utf-8")
+            self._handle = open(path, "a", encoding="utf-8")  # noqa: SIM115 -- kept open across writes; close() releases it
             self._day = day
             log.info("Writing to %s", path)
+        assert self._handle is not None
         return self._handle
 
     def write(self, vp: dict, received_at: float | None = None) -> bool:
@@ -51,7 +53,7 @@ class RawWriter:
             return False
         self._last_kept[veh] = received_at
 
-        day = datetime.fromtimestamp(received_at, tz=timezone.utc).strftime("%Y-%m-%d")
+        day = datetime.fromtimestamp(received_at, tz=UTC).strftime("%Y-%m-%d")
         handle = self._file_for(day)
         handle.write(json.dumps(vp) + "\n")
         handle.flush()

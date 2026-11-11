@@ -1,11 +1,11 @@
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
+from conftest import make_vp
 from streamlit.testing.v1 import AppTest
 
-from conftest import make_vp
 from tram_mlops.config import PROJECT_ROOT, load_config
 from tram_mlops.process import clean
 from tram_mlops.train import save, train
@@ -54,7 +54,7 @@ def test_dashboard_shows_forecasts_with_model(isolated_paths, synthetic_raw):
 def test_dashboard_live_mode_reads_fresh_raw_data(isolated_paths):
     raw_dir = isolated_paths / "raw"
     raw_dir.mkdir()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Trams 1-5 run 50-250 s late; the ingester writes records in time order.
     records = [make_vp(veh=v, t=now - timedelta(seconds=s), dl=-50 * v, desi=str(v))
                for s in range(110, -1, -10) for v in range(1, 6)]

@@ -99,8 +99,10 @@ def render_forecast(df: pd.DataFrame, limit: int | None = None) -> None:
     table = latest_per_tram(recent)
     table = table.assign(seen=table["local_time"].dt.strftime("%H:%M:%S"))
     table = table.sort_values("forecast_delay_s", ascending=False)
+    if limit is not None:
+        table = table.head(limit)
     st.dataframe(
-        table[["vehicle", "line", "direction", "delay_s", "forecast_delay_s", "seen"]].head(limit)
+        table[["vehicle", "line", "direction", "delay_s", "forecast_delay_s", "seen"]]
         .rename(columns={"vehicle": "Tram", "line": "Line", "direction": "Direction",
                          "delay_s": "Delay now (s)",
                          "forecast_delay_s": f"Forecast in {horizon_min:g} min (s)",
@@ -202,7 +204,7 @@ def render_history(lines: list[str]) -> None:
         freq = "5min" if span <= pd.Timedelta(hours=6) else "1h"
         st.subheader("Mean delay over time (s)")
         over_time = view.set_index("local_time")["delay_s"].resample(freq).mean().round()
-        over_time.index = over_time.index.tz_localize(None)  # plot in Helsinki wall-clock time
+        over_time = over_time.tz_localize(None)  # plot in Helsinki wall-clock time
         st.line_chart(over_time)
         st.caption(f"Averaged over {freq} buckets, Helsinki time")
 

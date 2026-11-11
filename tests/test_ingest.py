@@ -1,6 +1,7 @@
 import json
 
 from conftest import make_vp
+
 from tram_mlops.ingest import RawWriter, parse_message
 
 DAY_1 = 1770200000.0  # 2026-02-04 UTC
@@ -28,7 +29,7 @@ def test_writer_downsamples_per_vehicle(tmp_path):
     writer.close()
     assert kept == [True, False, True, True]
     lines = (tmp_path / "tram_2026-02-04.jsonl").read_text().splitlines()
-    assert [json.loads(l)["veh"] for l in lines] == [1, 2, 1]
+    assert [json.loads(line)["veh"] for line in lines] == [1, 2, 1]
 
 
 def test_writer_rolls_over_daily(tmp_path):

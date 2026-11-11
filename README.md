@@ -83,7 +83,7 @@ python -m tram_mlops.process                      # 3. build the dataset
 python -m tram_mlops.train                        # 4. train and version a model
 ```
 
-No time to collect? `process` falls back to a small bundled sample (`data/sample/`), so the History view works immediately.
+No time to collect? `process` falls back to a bundled sample: 45 continuous minutes of the weekday morning rush (all 119 trams, 1.2 MB). Both `process` and `train` work on a fresh clone, so the History view and the forecast panel work immediately.
 
 ### Docker
 
@@ -164,9 +164,9 @@ helsinki-tram-mlops/
 │   ├── dashboard.py     # Streamlit app (Live + History)
 │   └── config.py        # TOML config with env-var overrides
 ├── configs/config.toml  # every tunable setting
-├── tests/               # 28 pytest tests, including dashboard smoke tests
-├── scripts/             # figure and screenshot generation for this README
-├── data/sample/         # small bundled sample (Feb 2026)
+├── tests/               # 31 pytest tests, including dashboard and end-to-end pipeline tests
+├── scripts/             # sample cutter, README figures and screenshots
+├── data/sample/         # 45-min sample of real data (10 Nov 2026, 07:30–08:15)
 ├── docs/                # ROADMAP.md, README figures and screenshots
 ├── deploy/cpouta/       # cloud VM setup guide and script
 ├── Dockerfile, docker-compose.yml
@@ -185,10 +185,25 @@ TRAM_INGEST_SAMPLE_INTERVAL_S=5 python -m tram_mlops.ingest
 ## Testing and CI
 
 ```bash
-pytest          # 28 tests, about 10 s
+pip install -r requirements-dev.txt   # pinned test, lint and type-check tools
+pytest --cov                          # 31 tests, about 15 s; fails below 80% coverage
+ruff check src tests scripts
+mypy
+pre-commit install                    # run ruff, mypy and file checks on every commit
 ```
 
-The tests cover the delay sign convention, deduplication, outlier and line filtering, time zones, and leakage-free target construction. They also cover the purged time split, segment metrics, reading the tail of a file that's still being written (including across UTC midnight), the ingester's downsampling and daily file rollover, and the dashboard in both modes. The dashboard tests use Streamlit's headless `AppTest`. GitHub Actions runs the suite and a pipeline smoke test on every push.
+`make check` runs all of them plus the pipeline (on Linux or macOS).
+
+The tests cover the delay sign convention, deduplication, outlier and line filtering, time zones, and leakage-free target construction. They also cover the purged time split, segment metrics, reading the tail of a file that's still being written (including across UTC midnight), the ingester's downsampling and daily file rollover, and the dashboard in both modes. The dashboard tests use Streamlit's headless `AppTest`. An end-to-end test runs `process` then `train` on the bundled sample and checks that the model beats persistence, both overall and for trams already en route.
+
+GitHub Actions runs on every push and pull request:
+- **lint:** ruff and mypy
+- **test:** pytest with coverage on Python 3.11 and 3.13, then the `process` → `train` command-line run a fresh clone would do
+- **docker:** builds the image and processes the sample inside it as its non-root user
+
+The server deploys a commit only after all of these pass ([deploy/cpouta/](deploy/cpouta/README.md)).
+
+The sample is cut from a real collection day with `scripts/make_sample.py`, which streams the raw file and runs on the server next to it.
 
 To regenerate this README's figures and screenshots:
 

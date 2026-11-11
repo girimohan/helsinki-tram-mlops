@@ -7,10 +7,12 @@ Run with ``python -m tram_mlops.process [--input FILE_OR_DIR ...]``. Without
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
+from typing import IO
 
 import pandas as pd
 
@@ -38,16 +40,24 @@ COLUMNS = {
     "loc": "location_source",
 }
 REQUIRED = ["veh", "tst", "dl"]
+RAW_PATTERNS = ("*.jsonl", "*.jsonl.gz")
 
 
 def find_raw_files(inputs: Iterable[Path]) -> list[Path]:
     files: list[Path] = []
     for path in inputs:
         if path.is_dir():
-            files.extend(sorted(path.glob("*.jsonl")))
+            files.extend(sorted(f for pattern in RAW_PATTERNS for f in path.glob(pattern)))  # day order
         elif path.exists():
             files.append(path)
     return files
+
+
+def _open_text(file: Path) -> IO[str]:
+    """Open a raw file, transparently decompressing finished days stored as ``.gz``."""
+    if file.suffix == ".gz":
+        return gzip.open(file, "rt", encoding="utf-8")
+    return open(file, encoding="utf-8")
 
 
 def _parse_lines(lines: Iterable[str | bytes]) -> tuple[list[dict], int]:
@@ -69,7 +79,7 @@ def load_raw(files: Iterable[Path]) -> pd.DataFrame:
     """Read JSONL files into one DataFrame, skipping lines that aren't valid JSON objects."""
     records, bad = [], 0
     for file in files:
-        with open(file, encoding="utf-8") as f:
+        with _open_text(file) as f:
             file_records, file_bad = _parse_lines(f)
         records.extend(file_records)
         bad += file_bad

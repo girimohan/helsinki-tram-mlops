@@ -1,11 +1,11 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
 
 
 def make_vp(veh=1, t=None, dl=0, desi="4", route="1004", dir="1", start="12:00", **extra):
-    t = t or datetime(2026, 2, 4, 10, 0, tzinfo=timezone.utc)
+    t = t or datetime(2026, 2, 4, 10, 0, tzinfo=UTC)
     record = {
         "desi": desi, "dir": dir, "oper": 40, "veh": veh,
         "tst": t.strftime("%Y-%m-%dT%H:%M:%S.000Z"), "tsi": int(t.timestamp()),
@@ -21,7 +21,7 @@ def make_vp(veh=1, t=None, dl=0, desi="4", route="1004", dir="1", start="12:00",
 def synthetic_raw():
     """Two hours of 10 s observations for several trams whose lateness drifts over time."""
     rng = np.random.default_rng(0)
-    t0 = datetime(2026, 2, 4, 8, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 2, 4, 8, 0, tzinfo=UTC)
     records = []
     for veh in range(1, 9):
         delay = 0.0  # seconds late

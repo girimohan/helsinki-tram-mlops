@@ -9,8 +9,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import joblib
 import numpy as np
@@ -56,12 +57,12 @@ def time_split(data: pd.DataFrame, test_fraction: float,
     Training rows whose target (observed ``horizon_s`` later) falls after the cutoff
     are dropped, so no test-period information leaks into training.
     """
-    cutoff = data["timestamp"].quantile(1 - test_fraction)
+    cutoff = pd.Timestamp(data["timestamp"].quantile(1 - test_fraction))
     horizon = pd.Timedelta(seconds=horizon_s)
     return data[data["timestamp"] + horizon < cutoff], data[data["timestamp"] >= cutoff]
 
 
-def _scores(y_true: pd.Series, y_pred: np.ndarray) -> dict[str, float]:
+def _scores(y_true: pd.Series, y_pred: pd.Series | np.ndarray) -> dict[str, float]:
     return {
         "mae_s": round(float(mean_absolute_error(y_true, y_pred)), 2),
         "rmse_s": round(float(root_mean_squared_error(y_true, y_pred)), 2),
@@ -90,7 +91,7 @@ def train(df: pd.DataFrame, horizon_s: float, tolerance_s: float, test_fraction:
     model.fit(train_df[FEATURES], train_df[TARGET] - train_df["delay_s"])
     predicted = test_df["delay_s"] + model.predict(test_df[FEATURES])
 
-    metrics = {
+    metrics: dict[str, Any] = {
         "horizon_s": horizon_s,
         "train_rows": len(train_df),
         "test_rows": len(test_df),
@@ -123,7 +124,7 @@ def segment_masks(data: pd.DataFrame) -> dict[str, pd.Series]:
 
 
 def save(model: Pipeline, metrics: dict, models_dir: Path) -> Path:
-    version = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    version = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out = models_dir / version
     out.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, out / "model.joblib")
@@ -182,7 +183,7 @@ def main() -> None:
         run(args.horizon)
     except InsufficientDataError as exc:
         log.error("Not enough data to train: %s", exc)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":

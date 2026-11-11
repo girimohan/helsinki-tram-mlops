@@ -1,0 +1,8 @@
+# Development and CI tools, pinned so every machine and CI run checks the same way.
+-r requirements.txt
+pytest==9.1.1
+pytest-cov==7.1.0
+ruff==0.17.4
+mypy==2.4.1
+pandas-stubs==2.3.3.260113
+pre-commit==4.7.0

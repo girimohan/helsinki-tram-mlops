@@ -1,14 +1,14 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
-
 from conftest import make_vp
+
 from tram_mlops.features import FEATURES, TARGET, build_training_set
 from tram_mlops.process import clean
 from tram_mlops.train import InsufficientDataError, load_latest, predict_delay, save, time_split, train
 
-T0 = datetime(2026, 2, 4, 10, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 2, 4, 10, 0, tzinfo=UTC)
 
 
 def test_target_is_future_delay_of_same_trip():

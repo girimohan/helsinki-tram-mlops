@@ -7,6 +7,19 @@ This plan turns the current pipeline into a system that runs on its own:
 
 It builds on the existing code instead of replacing it. `process.clean()`, `features.add_features()`, the purged time split and the Streamlit dashboard all stay.
 
+## Deliverables
+
+The goal is an end-to-end production MLOps system on a real-world streaming source. Each deliverable maps to roadmap items:
+
+| Deliverable | Today | Delivered by |
+|---|---|---|
+| Live tram tracking | Done: live map and line status, refreshed every 15 s | E3 (always on, public) |
+| Historical analysis | History view over one in-memory table | E2 (weeks of data), E4 (quality reports) |
+| Delay prediction | Gradient boosting, 5 min ahead, against a persistence baseline | E5 (trustworthy evaluation), E13, E14 |
+| Anomaly detection | Not started | E15 |
+| Automated retraining | Manual `train` | E7, E8 |
+| Model monitoring | Offline test metrics only | E6 (live accuracy), E10 (alerts), E11 (drift) |
+
 ## Principles
 
 1. **Collection time is the bottleneck, not code.** The model's weakest segment (trams already en route) needs weeks of data covering rush hours, weekends and weather. The collector has to run permanently first; most later items depend on the data it gathers.
@@ -19,22 +32,23 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 
 | # | Enhancement | Effort | Needs | Status |
 |---|---|---|---|---|
-| 1 | [E1 Reproducible pipeline and CI](#e1-reproducible-pipeline-and-ci) | 1–1.5 d | none | Planned |
+| 1 | [E1 Reproducible pipeline and CI](#e1-reproducible-pipeline-and-ci) | 1–1.5 d | none | **Done** 2026-11-10 |
 | 2 | [E2 Incremental, day-partitioned storage](#e2-incremental-day-partitioned-storage) | 3–4 d | none | Planned |
 | 3 | [E3 Always-on host on CSC cPouta](#e3-always-on-host-on-csc-cpouta) | 2–3 d | none | **Phases 1–2 done**: collecting since 2026-11-09, public HTTPS dashboard, deploy on green CI, hourly Allas backups ([setup guide](../deploy/cpouta/README.md)). Phase 3 (Terraform) planned |
 | 4 | [E4 Data contracts and quality reports](#e4-data-contracts-and-quality-reports) | 2 d | E2 | Planned |
 | 5 | [E6 Prediction logging and live accuracy](#e6-prediction-logging-and-live-accuracy) | 3 d | E3 | Planned |
 | 6 | [E5 Backtesting](#e5-backtesting) | 2–3 d | E2, ~1 week of data | Planned |
 | 7 | [E7 Promotion gate and scheduled retraining](#e7-promotion-gate-and-scheduled-retraining) | 3 d | E2, E5 | Planned |
-| 8 | [E12 Packaging and container hardening](#e12-packaging-and-container-hardening) | 1.5–2 d | none | Planned |
-| 9 | [E8 Experiment tracking and model registry](#e8-experiment-tracking-and-model-registry) | 2–3 d | E7 | Planned |
-| 10 | [E10 Metrics, logs and alerts](#e10-metrics-logs-and-alerts) | 3 d | E3 | Planned |
-| 11 | [E11 Drift detection](#e11-drift-detection) | 2 d | E6 | Planned |
-| 12 | [E9 Inference API](#e9-inference-api) | 3–4 d | E6 | Planned |
-| 13 | [E13 Prediction intervals](#e13-prediction-intervals) | 3–4 d | E5, ~2 weeks of data | Planned |
-| 14 | [E14 Network-aware features](#e14-network-aware-features) | 1.5–2 wk | E5, ~3 weeks of data | Planned |
+| 8 | [E15 Anomaly detection](#e15-anomaly-detection) | 3–4 d | E2, E6, ~2 weeks of data | Planned |
+| 9 | [E12 Packaging and container hardening](#e12-packaging-and-container-hardening) | 1.5–2 d | none | Planned |
+| 10 | [E8 Experiment tracking and model registry](#e8-experiment-tracking-and-model-registry) | 2–3 d | E7 | Planned |
+| 11 | [E10 Metrics, logs and alerts](#e10-metrics-logs-and-alerts) | 3 d | E3 | Planned |
+| 12 | [E11 Drift detection](#e11-drift-detection) | 2 d | E6 | Planned |
+| 13 | [E9 Inference API](#e9-inference-api) | 3–4 d | E6 | Planned |
+| 14 | [E13 Prediction intervals](#e13-prediction-intervals) | 3–4 d | E5, ~2 weeks of data | Planned |
+| 15 | [E14 Network-aware features](#e14-network-aware-features) | 1.5–2 wk | E5, ~3 weeks of data | Planned |
 
-Items 1–7 (about 18 working days) complete the core loop. The rest adds depth.
+Items 1–7 (about 18 working days) complete the core loop. Item 8 completes the six deliverables. The rest adds depth.
 
 ---
 
@@ -48,6 +62,16 @@ Items 1–7 (about 18 working days) complete the core loop. The rest adds depth.
 - CI matrix on Python 3.11 and 3.13: ruff, mypy on `src/`, pytest with coverage, a full `process` then `train` run, and `docker build`.
 
 **Changes.** `scripts/make_sample.py`, `data/sample/tram_sample.jsonl.gz`, `.pre-commit-config.yaml`, `Makefile`, ruff and mypy settings in `pyproject.toml`, `ci.yml`.
+
+**Done 2026-11-10.**
+- **Sample:** 07:30–08:15 Helsinki time on Tuesday 10 Nov 2026: 30,135 records, 119 trams, 1.2 MB gzipped. The cut is deterministic, and the script streams the raw file so it runs on the VM.
+- **Fresh clone trains:** on the sample, the model scores 35.6 s MAE against 63.0 s for persistence, and 37.7 s against 42.1 s en route.
+- **Tests:** an end-to-end test runs process → train on the sample and fails if the model loses to persistence en route.
+- **CI jobs:**
+  - lint: ruff and mypy, with stubs that match pandas 2.3
+  - test: Python 3.11 and 3.13, coverage gate at 80%, then the command-line pipeline
+  - docker: builds the image and processes the sample inside it
+- **Dependencies:** dev tools are pinned in `requirements-dev.txt`, and `pytest` is out of the runtime image.
 
 ## E2. Incremental, day-partitioned storage
 
@@ -226,6 +250,26 @@ Items 1–7 (about 18 working days) complete the core loop. The rest adds depth.
 - **Weather:** Finnish Meteorological Institute open data.
 - **Ablation:** the backtest shows what each feature group adds.
 - **Code layout:** `features.py` becomes a package; `__init__` re-exports the current names, so existing imports keep working.
+
+## E15. Anomaly detection
+
+**Why.** Delay forecasting answers "how late will this tram be?". Operators also need to know when something unusual is happening right now: a breakdown, a blocked track, a line-wide disruption. These events are rare, unlabelled and costly, so they need a different method from the regression model.
+
+**Design.**
+- **Two levels:**
+  - **Vehicle:** a tram is stationary away from a stop for several minutes while in service, or its delay grows much faster than is usual for its line at that hour.
+  - **Line:** many trams on one line lose time at once. The line's delay change over the last 10 minutes is an outlier for that line × hour × day type.
+- **Method:**
+  - Robust statistics first (median and MAD baselines computed from historical partitions, robust z-scores). They are explainable and need no labels.
+  - Isolation Forest on per-line 10-minute aggregates only if the simple rules miss events.
+- **Model-aware signal:** once E6 logs predictions, a burst of large forecast errors on one line means a disruption the model didn't see coming.
+- **Evaluation:** HSL's public GTFS-RT service alerts serve as weak labels for precision and recall. Anomalies flagged *before* HSL posts an alert count as lead time.
+- **Outputs:**
+  - events in `data/anomalies/date=…/` with type, line, vehicle, start and end time, score and the evidence behind them
+  - an "Incidents" panel in the Live view
+  - an alert through E10
+
+**Changes.** `anomaly.py`, a scoring step in the forecaster loop (E6), a dashboard panel, and `tests/test_anomaly.py` with replayed real incidents as fixtures.
 
 ---
 

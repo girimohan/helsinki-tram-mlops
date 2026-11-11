@@ -5,8 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,7 +17,37 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: pip install -r requirements.txt && pip install --no-deps -e .
-      - run: pytest -q
-      # Smoke-test the pipeline on the bundled sample.
-      - run: python -m tram_mlops.process
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt && pip install --no-deps -e .
+      - run: ruff check src tests scripts
+      - run: mypy
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt && pip install --no-deps -e .
+      - run: pytest --cov --cov-report=term-missing
+      # What a fresh clone runs: with no collected data, both fall back to the bundled sample.
+      - name: Pipeline on the bundled sample
+        run: |
+          python -m tram_mlops.process
+          python -m tram_mlops.train
+          cat models/latest.json
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t tram-mlops:ci .
+      # The image the server runs must be able to process the sample as its non-root user.
+      - run: docker run --rm tram-mlops:ci python -m tram_mlops.process

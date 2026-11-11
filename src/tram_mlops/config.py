@@ -23,8 +23,8 @@ def _coerce(raw: str, current: Any) -> Any:
 
 
 @lru_cache(maxsize=1)
-def load_config(path: str | os.PathLike | None = None) -> dict[str, dict[str, Any]]:
-    config_path = Path(path or os.environ.get("TRAM_CONFIG", DEFAULT_CONFIG))
+def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, dict[str, Any]]:
+    config_path = Path(path) if path else Path(os.environ.get("TRAM_CONFIG", str(DEFAULT_CONFIG)))
     with open(config_path, "rb") as f:
         config = tomllib.load(f)
 
@@ -36,6 +36,6 @@ def load_config(path: str | os.PathLike | None = None) -> dict[str, dict[str, An
     return config
 
 
-def resolve_path(value: str | os.PathLike) -> Path:
+def resolve_path(value: str | os.PathLike[str]) -> Path:
     path = Path(value)
     return path if path.is_absolute() else PROJECT_ROOT / path
