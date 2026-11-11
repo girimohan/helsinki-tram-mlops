@@ -476,10 +476,11 @@ class TramData:
                               "mean_delay_min": _minutes(r["mean_delay_s"])} for r in df.to_dict("records")]
         else:
             df = h.by_line(self.on_time_window[1])
-            rows = [{"line": str(r["line"]), "on_time_pct": round(float(r["on_time_pct"]), 1),
-                     "mean_delay_min": _minutes(r["mean_delay_s"]), "p90_delay_min": _minutes(r["p90_delay_s"]),
-                     "observations": int(r["rows"])}
-                    for r in df.to_dict("records")]
+            rows: list[dict[str, Any]] = [
+                {"line": str(r["line"]), "on_time_pct": round(float(r["on_time_pct"]), 1),
+                 "mean_delay_min": _minutes(r["mean_delay_s"]), "p90_delay_min": _minutes(r["p90_delay_s"]),
+                 "observations": int(r["rows"])}
+                for r in df.to_dict("records")]
             # Lettered lines (3H, 7B, 1T) are short or occasional variants with few trips. Ranked with
             # the main lines they top every list on a handful of runs, and the model ranks them even
             # when they are listed apart, so they are named only (ask for one with ``line``).
