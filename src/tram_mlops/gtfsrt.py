@@ -9,6 +9,13 @@ so history exists only if it is recorded as it happens. Files go to
 - ``trip_updates_YYYY-MM-DD.jsonl.gz``: one line per tram trip whose update changed since
   the previous poll, and a ``removed`` line when a trip leaves the feed
 
+and two files that are replaced rather than appended to:
+
+- ``trip_updates_current.json``: every tram trip in the latest poll, so "when is the next
+  tram" needs no scan of the day's archive
+- ``tram_network.json``: tram lines, their destinations and every stop's name, from the
+  static GTFS (refreshed daily). The realtime feeds name stops only by id.
+
 Each poll is appended as its own gzip member, so a crash loses at most that poll and
 the files stay readable with ``gzip.open``. Every line carries ``fetched_at``: joins
 must only use updates fetched before the moment being predicted.
@@ -31,7 +38,8 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
-from collections.abc import Iterable
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,11 +49,13 @@ from google.protobuf.json_format import MessageToDict
 from google.transit import gtfs_realtime_pb2
 
 from tram_mlops.config import load_config, resolve_path
-from tram_mlops.storage import append_gzip_jsonl
+from tram_mlops.storage import append_gzip_jsonl, write_json_atomic
 
 log = logging.getLogger(__name__)
 
 USER_AGENT = "tram-mlops (+https://github.com/girimohan/helsinki-tram-mlops)"
+CURRENT_TRIPS = "trip_updates_current.json"
+NETWORK = "tram_network.json"
 
 
 # --- HTTP ------------------------------------------------------------------------------
@@ -92,14 +102,57 @@ def tram_routes_from_gtfs(zip_path: Path, route_types: Iterable[str] = ("0", "90
         return {row["route_id"] for row in reader if row.get("route_type") in wanted}
 
 
-def download_tram_routes(url: str, route_types: Iterable[str]) -> set[str]:
-    """Download static GTFS (~90 MB) to a temporary file and return its tram route ids."""
+def _csv_rows(archive: zipfile.ZipFile, name: str) -> Iterator[dict[str, str]]:
+    with archive.open(name) as f:
+        yield from csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+
+
+def network_from_gtfs(zip_path: Path, routes: set[str]) -> dict[str, Any]:
+    """Names for what the realtime feeds give only as ids: tram lines, destinations, stops.
+
+    - ``routes``: tram route id -> ``{"line", "name"}`` (``1004`` -> line ``4``)
+    - ``headsigns``: ``"route|direction"`` -> the destination its trips usually show
+    - ``stops``: stop id -> ``[name, code, description, lat, lon, vehicle_type, platform]``
+      for every stop, since a few line 15 stops are typed as bus stops
+    """
+    with zipfile.ZipFile(zip_path) as archive:
+        lines = {row["route_id"]: {"line": row["route_short_name"].strip(), "name": row["route_long_name"].strip()}
+                 for row in _csv_rows(archive, "routes.txt") if row["route_id"] in routes}
+        headsigns: defaultdict[str, Counter[str]] = defaultdict(Counter)
+        for row in _csv_rows(archive, "trips.txt"):
+            if row["route_id"] in routes and row.get("trip_headsign"):
+                headsigns[f"{row['route_id']}|{row['direction_id']}"][row["trip_headsign"].strip()] += 1
+        stops = {}
+        for row in _csv_rows(archive, "stops.txt"):
+            if (row.get("location_type") or "0").strip() not in ("", "0"):
+                continue  # stations and entrances; vehicles stop at their platforms
+            try:
+                lat, lon = round(float(row["stop_lat"]), 6), round(float(row["stop_lon"]), 6)
+            except (KeyError, ValueError):
+                continue
+            stops[row["stop_id"]] = [row["stop_name"].strip(), (row.get("stop_code") or "").strip(),
+                                     (row.get("stop_desc") or "").strip(), lat, lon,
+                                     (row.get("vehicle_type") or "").strip(), (row.get("platform_code") or "").strip()]
+    return {"routes": lines, "headsigns": {k: c.most_common(1)[0][0] for k, c in sorted(headsigns.items())},
+            "stops": stops}
+
+
+def download_static(url: str, route_types: Iterable[str], network_path: Path | None = None) -> set[str]:
+    """Download static GTFS (~90 MB) to a temporary file and return its tram route ids.
+
+    With ``network_path``, also save the tram network (``network_from_gtfs``) there.
+    """
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "gtfs.zip"
         with urllib.request.urlopen(request, timeout=300) as response, open(path, "wb") as out:
             shutil.copyfileobj(response, out, 1 << 20)
-        return tram_routes_from_gtfs(path, route_types)
+        routes = tram_routes_from_gtfs(path, route_types)
+        if network_path is not None and routes:
+            network = network_from_gtfs(path, routes)
+            network["downloaded_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+            write_json_atomic(network_path, network)
+        return routes
 
 
 def is_tram(route_id: str, routes: set[str]) -> bool:
@@ -156,16 +209,19 @@ class TripUpdateArchive:
 
     def __init__(self) -> None:
         self._seen: dict[str, str] = {}
+        self.current: list[dict[str, Any]] = []  # every tram trip in the latest snapshot
 
     def changes(self, feed: gtfs_realtime_pb2.FeedMessage, routes: set[str],
                 fetched_at: str) -> list[dict[str, Any]]:
         current: dict[str, str] = {}
         lines = []
+        self.current = []
         header_ts = feed.header.timestamp or None
         for entity in feed.entity:
             if not entity.HasField("trip_update") or not is_tram(entity.trip_update.trip.route_id, routes):
                 continue
             record = trip_record(entity)
+            self.current.append(record)
             digest = hashlib.sha1(json.dumps(record, sort_keys=True).encode()).hexdigest()
             current[record["key"]] = digest
             if self._seen.get(record["key"]) != digest:
@@ -221,7 +277,8 @@ class Poller:
             return
         # Whatever happens, don't download ~90 MB again for a while.
         self.routes_retry_at = now + 600
-        routes = download_tram_routes(self.cfg["static_gtfs_url"], self.cfg["tram_route_types"])
+        routes = download_static(self.cfg["static_gtfs_url"], self.cfg["tram_route_types"],
+                                 self.out_dir / NETWORK)
         if not routes:
             raise ValueError("static GTFS lists no tram routes")
         self.routes, self.routes_loaded_at = routes, now
@@ -234,6 +291,8 @@ class Poller:
         result = fetch(self.cfg["trip_updates_url"])
         lines = self.trips.changes(parse_feed(result.body), self.routes, now.isoformat(timespec="seconds"))
         append_gzip_jsonl(daily_path(self.out_dir, "trip_updates", now), lines)
+        write_json_atomic(self.out_dir / CURRENT_TRIPS,
+                          {"fetched_at": now.isoformat(timespec="seconds"), "trips": self.trips.current})
         self.stats["trip_lines"] += len(lines)
 
     def poll_alerts(self) -> None:

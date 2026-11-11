@@ -20,8 +20,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -180,7 +178,7 @@ class Forecaster:
                 for row in rows
             ],
         }
-        write_json_atomic(self.out_dir / LATEST, snapshot)
+        storage.write_json_atomic(self.out_dir / LATEST, snapshot)
 
     def run(self, interval_s: float, duration_s: float | None = None) -> None:
         started = last_log = time.monotonic()
@@ -194,15 +192,6 @@ class Forecaster:
                 log.info("Forecasts made %(forecasts)d, scored %(scored)d, unmatched %(unmatched)d", self.stats)
                 last_log = cycle
             time.sleep(max(0.0, interval_s - (time.monotonic() - cycle)))
-
-
-def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".latest-", suffix=".json")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f)
-    os.chmod(tmp, storage.FILE_MODE)
-    os.replace(tmp, path)
 
 
 def read_latest(out_dir: Path) -> dict[str, Any] | None:

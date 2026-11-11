@@ -19,6 +19,7 @@ The goal is an end-to-end production MLOps system on a real-world streaming sour
 | Anomaly detection | Not started | E15, with labels from E16 (alerts, cancellations, skipped stops) |
 | Automated retraining | Manual `train` | E7, E8 |
 | Model monitoring | Offline test metrics only | E6 (live accuracy), E10 (alerts), E11 (drift), E16 (feed freshness) |
+| Questions in plain language | Ask page: an LLM answers from six read-only tools over the live and historical data | E18 |
 
 ## Principles
 
@@ -49,6 +50,7 @@ Ordered by value per day of effort, adjusted for what each item unblocks.
 | 14 | [E9 Inference API](#e9-inference-api) | 3–4 d | E6 | Planned |
 | 15 | [E13 Prediction intervals](#e13-prediction-intervals) | 3–4 d | E5, ~2 weeks of data | Planned |
 | 16 | [E14 Network-aware features](#e14-network-aware-features) | 1.5–2 wk | E5, ~3 weeks of data | Planned |
+| 17 | [E18 Chat assistant](#e18-chat-assistant) | 1.5 d | E6, E16 | **Done** 2026-11-11: Ask page, tested live against Groq |
 
 Items 1–8 complete the core loop. Item 4 comes early only because its data can't be backfilled. Item 9 completes the six deliverables. The rest adds depth.
 
@@ -439,6 +441,35 @@ def gtfs_trip_key(route, hfp_dir, oday, start, local_time):
 - **Acceptance:** no `delay_now` slice worse than persistence, with the en-route gain kept.
 
 **Changes.** `train.py` (loss and weights), maybe `features.py`, and a regression test on the breakdown.
+
+## E18. Chat assistant
+
+**Why.** The data already answers riders' questions ("when is the next tram at Lasipalatsi?", "is line 4 running late?"), but only for someone who knows which page and table to read. A chat window makes it usable by anyone, and shows tool calling over a live data platform.
+
+**Design.**
+- **Tools, not text-to-SQL.** The LLM picks one of six read-only functions (`chat_tools.TOOLS`) with simple arguments: a stop name, a line, a number of days. Each returns a small JSON dict. It can't run its own queries, read files or change anything, so a malicious question can at worst waste a request.
+- **Provider.** Any OpenAI-compatible chat completions API, called with the standard library. The default is Groq's free tier with `openai/gpt-oss-120b`, falling back to `openai/gpt-oss-20b` when rate limited. The free tier allows about 30 requests and 8,000 tokens a minute per model and 1,000 requests a day; a question takes 2–3 requests.
+- **Fast lookups.**
+  - The GTFS-RT archiver now also writes `trip_updates_current.json`, every tram trip in the latest poll. Scanning the day's gzip archive took 19 s per question; this takes milliseconds.
+  - It also saves `tram_network.json` from the static GTFS it already downloads daily: line names, destinations and all 8,283 stop names (645 KB). Some line 15 stops are typed as bus stops, so a stop counts as a tram stop when it is typed as one or when a tram trip uses it.
+- **Joining feeds.** A tram's delay now (HFP) is matched to HSL's trip prediction (GTFS-RT) on route, direction (HFP 1/2 = GTFS 0/1), service day and start time, with hours past 24 wrapped.
+- **Guards.**
+  - Quotas per minute, per day and per visit; questions capped at 500 characters; the last 6 messages sent as context.
+  - Tool errors go back to the model as `{"error": ...}`, so it can say what's missing instead of guessing.
+  - The page tells visitors that questions go to the model's provider and that answers can be wrong.
+
+**Status.**
+- **Built:** `chat_tools.py`, `chat.py`, the Ask page, and 22 tests (tools against fixture feeds, the tool loop with a scripted client, the page through AppTest).
+- **Tested live** on 11 Nov: the branch ran on the VM against Groq and the real data. Answers took 1–3 s with one tool call each.
+- **Fixed after the live run:**
+  - English questions got Finnish answers, because the tool results are in Finnish; the prompt now says to reply in the question's language.
+  - Signed delays ("–2 min") are now written in words ("2 min early").
+  - Rare lettered variants (3H, 46% on time on a handful of runs) topped the punctuality ranking even when listed apart. Now they are only named, unless asked for by line.
+
+**Next.**
+- Add HSL's Swedish stop names (`translations.txt`).
+- Log questions and the tools they used (without personal data) to find questions the tools can't answer.
+- Add a small evaluation set of questions with expected tool calls, run in CI against a recorded client.
 
 ---
 

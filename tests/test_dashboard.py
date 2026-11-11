@@ -243,3 +243,43 @@ def test_live_page_shows_the_forecaster_output_when_fresh(isolated_paths):
     assert not app.exception
     assert {m.label: m.value for m in app.metric}["Live error, last hour (5 min ahead)"] == "20 s"
     assert any("forecaster service" in c.value for c in app.caption)
+
+
+def test_ask_page_without_an_api_key_explains_itself(isolated_paths, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    app = open_page(AppTest.from_file(DASHBOARD, default_timeout=60).run(), "ask")
+    assert not app.exception
+    assert any("GROQ_API_KEY" in i.value for i in app.info)
+
+
+def test_ask_page_answers_with_the_tools_it_used(isolated_paths, monkeypatch):
+    from tram_mlops import chat
+
+    class FakeClient:
+        def __init__(self, settings):
+            self.calls = 0
+
+        def complete(self, model, messages, tools, tool_choice="auto"):
+            self.calls += 1
+            if self.calls == 1:
+                return {"role": "assistant", "content": "", "tool_calls": [{
+                    "id": "c1", "type": "function",
+                    "function": {"name": "next_trams", "arguments": '{"stop": "Lasipalatsi"}'}}]}
+            # The tool ran against the (empty) data folder and said so.
+            assert "error" in json.loads(messages[-1]["content"])
+            return {"role": "assistant", "content": "No predictions right now, sorry."}
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr(chat, "OpenAICompatibleClient", FakeClient)
+    app = open_page(AppTest.from_file(DASHBOARD, default_timeout=60).run(), "ask")
+    assert not app.exception
+    app.button[0].click()  # the first example question
+    app = open_page(app, "ask")
+    assert not app.exception
+    assert [m.name for m in app.chat_message] == ["user", "assistant"]
+    assert app.chat_message[1].markdown[0].value == "No predictions right now, sorry."
+    assert any("Looked up: Next trams (Lasipalatsi)" in c.value for c in app.caption)
+
+    app.chat_input[0].set_value("And line 4?")
+    app = open_page(app, "ask")
+    assert [m.name for m in app.chat_message] == ["user", "assistant", "user", "assistant"]

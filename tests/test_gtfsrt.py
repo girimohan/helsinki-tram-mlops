@@ -101,10 +101,10 @@ def test_poller_keeps_archiving_alerts_when_static_gtfs_fails(tmp_path, monkeypa
     monkeypatch.setattr(gtfsrt, "fetch", lambda url, *a, **k: gtfsrt.Fetched(200, bodies[url], '"e"'))
     downloads = []
 
-    def failing_download(url, types):
+    def failing_download(url, types, network_path):
         downloads.append(url)
         raise OSError("static GTFS unavailable")
-    monkeypatch.setattr(gtfsrt, "download_tram_routes", failing_download)
+    monkeypatch.setattr(gtfsrt, "download_static", failing_download)
 
     poller = gtfsrt.Poller(cfg, tmp_path)
     poller.run(duration_s=0.01)
@@ -114,7 +114,33 @@ def test_poller_keeps_archiving_alerts_when_static_gtfs_fails(tmp_path, monkeypa
     poller.refresh_routes(poller.routes_retry_at - 1)
     assert len(downloads) == 1
 
-    monkeypatch.setattr(gtfsrt, "download_tram_routes", lambda url, types: set(TRAMS))
+    monkeypatch.setattr(gtfsrt, "download_static", lambda url, types, network_path: set(TRAMS))
     poller.refresh_routes(poller.routes_retry_at + 1)
     poller.poll_trip_updates()
-    assert sorted(p.name.split("_")[0] for p in tmp_path.iterdir()) == ["alerts", "trip"]
+    names = sorted(p.name for p in tmp_path.iterdir())
+    assert [n.split("_")[0] for n in names] == ["alerts", "trip", "trip"]
+    # Besides the archive, the latest poll's trips are kept whole for quick lookups.
+    current = json.loads((tmp_path / gtfsrt.CURRENT_TRIPS).read_text(encoding="utf-8"))
+    assert [t["key"] for t in current["trips"]] == ["1009|0|20261111|10:00:00"]
+    assert current["trips"][0]["stops"] == [["1", 100, None, None, "SCHEDULED"]]
+
+
+def test_network_names_lines_destinations_and_stops(tmp_path):
+    path = tmp_path / "gtfs.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("routes.txt", "route_id,route_short_name,route_long_name,route_type\n"
+                                 "1004,4,Katajanokka - Munkkiniemi,0\n1020,20,Bus,3\n")
+        z.writestr("trips.txt", "route_id,service_id,trip_id,trip_headsign,direction_id\n"
+                                "1004,s,a,Munkkiniemi,0\n1004,s,b,Munkkiniemi,0\n1004,s,c,Töölö,0\n"
+                                "1004,s,d,Katajanokka,1\n1020,s,e,Elsewhere,0\n")
+        z.writestr("stops.txt", "stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,location_type,"
+                                "vehicle_type,platform_code\n"
+                                "1020443,H0102,Lasipalatsi,Mannerheimintie,60.170231,24.937846,0,0,52\n"
+                                "1000001,,Rautatieasema,,60.17,24.94,1,,\n")
+    network = gtfsrt.network_from_gtfs(path, {"1004"})
+    assert network["routes"] == {"1004": {"line": "4", "name": "Katajanokka - Munkkiniemi"}}
+    # The destination most of a direction's trips show.
+    assert network["headsigns"] == {"1004|0": "Munkkiniemi", "1004|1": "Katajanokka"}
+    # Stations (location_type 1) are left out: trams stop at their platforms.
+    assert network["stops"] == {"1020443": ["Lasipalatsi", "H0102", "Mannerheimintie", 60.170231, 24.937846,
+                                            "0", "52"]}

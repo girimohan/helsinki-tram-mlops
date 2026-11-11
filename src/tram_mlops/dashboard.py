@@ -5,6 +5,8 @@ one runs):
 
 - **Live** reads the newest raw records the collector is writing and refreshes itself,
   with HSL's service alerts and cancellations for each line.
+- **Ask** answers questions in plain language: an LLM calls read-only lookups over the
+  same data (see ``chat`` and ``chat_tools``).
 - **History** aggregates the processed partitions with DuckDB (see ``history``).
 - **Model health** shows live accuracy: every forecast the forecaster logs is scored
   against what happened 5 minutes later, next to persistence (see ``monitoring``).
@@ -16,6 +18,7 @@ To add a page, write a ``*_page()`` function and add it to ``pages()``.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from datetime import date, timedelta
@@ -27,11 +30,12 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-from tram_mlops import alerts, feeds, forecaster, monitoring, process, status, storage
+from tram_mlops import alerts, chat, chat_tools, feeds, forecaster, monitoring, process, status, storage
 from tram_mlops.config import load_config, resolve_path
 from tram_mlops.history import History, available_days
 from tram_mlops.train import load_latest, predict_delay
 
+log = logging.getLogger(__name__)
 cfg = load_config()
 PROCESSED_DIR = resolve_path(cfg["paths"]["processed_dir"])
 MODELS_DIR = resolve_path(cfg["paths"]["models_dir"])
@@ -994,6 +998,111 @@ def model_health_page() -> None:
         st.caption(f"Models live in the last 24 h: {', '.join(versions)}")
 
 
+# --- Ask -------------------------------------------------------------------------------
+
+EXAMPLE_QUESTIONS = (
+    "When is the next tram at Lasipalatsi?",
+    "How is line 4 doing right now?",
+    "Are there disruptions on the trams?",
+    "Which line has been least punctual this week?",
+)
+TOOL_LABELS = {
+    "next_trams": "Next trams",
+    "find_stop": "Stop search",
+    "line_status": "Trams in service",
+    "service_alerts": "Service alerts",
+    "punctuality": "Punctuality history",
+    "forecast_accuracy": "Forecast accuracy",
+}
+
+
+@st.cache_resource
+def chat_quota(per_minute: int, per_day: int) -> chat.Quota:
+    """Shared by every visitor: the API's free tier is one pool."""
+    return chat.Quota(per_minute, per_day)
+
+
+@st.cache_resource
+def tram_data(paths: tuple[str, ...]) -> chat_tools.TramData:
+    """One instance per set of data paths, so its file caches are shared between visitors."""
+    return chat_tools.TramData.from_config()
+
+
+def tools_caption(tools: list[dict[str, Any]], model: str | None) -> str:
+    """``Looked up: Next trams (Lasipalatsi) · ... · openai/gpt-oss-120b``."""
+    parts = []
+    for use in tools:
+        args = ", ".join(str(v) for v in use["arguments"].values())
+        parts.append(TOOL_LABELS.get(use["name"], use["name"]) + (f" ({args})" if args else ""))
+    looked_up = "Looked up: " + " · ".join(parts) if parts else "Answered without looking anything up"
+    return f"{looked_up} · {model}" if model else looked_up
+
+
+def render_chat_message(message: dict[str, Any]) -> None:
+    with st.chat_message(message["role"]):
+        # Streamlit reads $...$ as LaTeX.
+        st.markdown(message["content"].replace("$", r"\$"))
+        if message["role"] == "assistant" and "tools" in message:
+            st.caption(tools_caption(message["tools"], message.get("model")))
+
+
+def answer(question: str, history: list[dict[str, Any]], settings: chat.Settings) -> dict[str, Any]:
+    refusal = chat_quota(settings.questions_per_minute, settings.questions_per_day).take()
+    if refusal:
+        return {"role": "assistant", "content": refusal}
+    data = tram_data((str(GTFSRT_DIR), str(RAW_DIR), str(PROCESSED_DIR), str(PREDICTIONS_DIR)))
+    assistant = chat.Assistant(chat.OpenAICompatibleClient(settings), data, settings)
+    try:
+        reply = assistant.ask(question, history)
+    except chat.RateLimited:
+        return {"role": "assistant", "content": "The AI model's free quota is used up for the moment. "
+                                                "Please try again in a minute or two."}
+    except chat.LLMError as exc:
+        log.warning("Chat failed: %s", exc)
+        return {"role": "assistant", "content": "Sorry, the AI model couldn't be reached. Please try again."}
+    return {"role": "assistant", "content": reply.text, "model": reply.model,
+            "tools": [{"name": u.name, "arguments": u.arguments} for u in reply.tools]}
+
+
+def ask_page() -> None:
+    settings = chat.Settings.from_config()
+    st.caption("Ask about Helsinki's trams in plain language. An AI model looks the answer up in this project's "
+               "data (HSL's realtime predictions, live tram positions, service alerts, the collected history and "
+               "the delay model) and explains it. It can make mistakes, so check anything important on the "
+               "Live page. Questions are sent to the model's provider.")
+    if not settings.configured:
+        st.info("The assistant isn't set up on this server: it needs an API key for the chat model in the "
+                f"`{cfg['chat']['api_key_env']}` environment variable (see `[chat]` in configs/config.toml).")
+        return
+    history: list[dict[str, Any]] = st.session_state.setdefault("chat_history", [])
+    if history and st.sidebar.button("New conversation", icon=":material/refresh:"):
+        history.clear()
+        st.session_state["chat_asked"] = 0
+    for message in history:
+        render_chat_message(message)
+
+    asked = st.session_state.get("chat_asked", 0)
+    if asked >= settings.questions_per_session:
+        st.info("That's the question limit for one visit. Start a new conversation from the sidebar.")
+        return
+    question = st.chat_input("Ask about Helsinki's trams", max_chars=settings.max_question_chars)
+    if not history and not question:
+        st.caption("Try one of these:")
+        for column, example in zip(st.columns(len(EXAMPLE_QUESTIONS)), EXAMPLE_QUESTIONS, strict=True):
+            if column.button(example, width="stretch"):
+                question = example
+    if not question:
+        return
+    earlier = list(history)
+    history.append({"role": "user", "content": question})
+    render_chat_message(history[-1])
+    with st.spinner("Looking it up…"):
+        reply = answer(question, earlier, settings)
+    history.append(reply)
+    st.session_state["chat_asked"] = asked + 1
+    render_chat_message(reply)
+
+
 # --- navigation ------------------------------------------------------------------------
 
 def pages() -> dict[str, Any]:
@@ -1004,6 +1113,7 @@ def pages() -> dict[str, Any]:
     """
     entries: list[tuple[Callable[[], None], str, str, str]] = [
         (live_page, "Live", "live", ":material/radar:"),
+        (ask_page, "Ask", "ask", ":material/chat:"),
         (history_page, "History", "history", ":material/bar_chart:"),
         (model_health_page, "Model health", "model-health", ":material/query_stats:"),
         (status_page, "System", "system", ":material/monitor_heart:"),
