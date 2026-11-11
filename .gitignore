@@ -29,3 +29,5 @@ clouds.yaml
 
 # Claude Code agent worktrees
 .claude/worktrees/
+# Personal Claude Code settings for this checkout
+.claude/settings.local.json
